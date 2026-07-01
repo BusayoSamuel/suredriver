@@ -5,6 +5,10 @@ const defaultUrl =
   process.env.EXPO_PUBLIC_API_URL ??
   'http://localhost:3000';
 
+export function getApiUrl() {
+  return defaultUrl.replace(/\/$/, '');
+}
+
 let authToken: string | null = null;
 
 export function setApiToken(token: string | null) {
@@ -77,6 +81,14 @@ export const api = {
       nombaOrderReference?: string;
       nombaTransactionId?: string;
     }>(`/payments/bookings/${bookingId}/mock-confirm`, { method: 'POST' }),
+  confirmPayment: (bookingId: string) =>
+    request<{
+      bookingId: string;
+      status: string;
+      paymentStatus: string;
+      nombaOrderReference?: string | null;
+      nombaTransactionId?: string | null;
+    }>(`/payments/bookings/${bookingId}/confirm`, { method: 'POST' }),
   reviewBooking: (id: string, rating: number, comment?: string) =>
     request(`/bookings/${id}/review`, {
       method: 'POST',

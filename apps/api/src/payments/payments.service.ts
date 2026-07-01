@@ -99,8 +99,34 @@ export class PaymentsService {
         bookingId,
         verification.transactionId,
         false,
+        true,
       );
     }
+  }
+
+  async confirmCheckoutPayment(ownerId: string, bookingId: string) {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { payment: true },
+    });
+    if (!booking || booking.ownerId !== ownerId) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    await this.syncPaymentFromNomba(bookingId);
+
+    const updated = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: { payment: true },
+    });
+
+    return {
+      bookingId,
+      status: updated!.status,
+      paymentStatus: updated!.payment?.status ?? 'pending',
+      nombaOrderReference: updated!.payment?.nombaOrderReference,
+      nombaTransactionId: updated!.payment?.nombaTransactionId,
+    };
   }
 
   async handleWebhook(payload: {
@@ -126,6 +152,7 @@ export class PaymentsService {
     bookingOrOrderRef: string,
     transactionId?: string | null,
     byOrderRef = false,
+    trusted = false,
   ) {
     const payment = await this.prisma.payment.findFirst({
       where: byOrderRef
@@ -135,7 +162,7 @@ export class PaymentsService {
     });
     if (!payment || payment.status === PaymentStatus.paid) return payment;
 
-    if (!this.nomba.mockMode && payment.nombaOrderReference) {
+    if (!this.nomba.mockMode && payment.nombaOrderReference && !trusted) {
       const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
       if (!verification.verified) {
         this.logger.warn(`Payment verification failed for ${payment.nombaOrderReference}`);

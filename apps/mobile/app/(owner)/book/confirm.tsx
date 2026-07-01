@@ -7,7 +7,19 @@ import { AccessibleButton } from '@/components/AccessibleButton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { NombaCheckoutDemo } from '@/components/NombaCheckoutDemo';
 import { useAuth } from '@/context/AuthContext';
-import { api, setApiToken, type Quote } from '@/services/api';
+import { api, getApiUrl, setApiToken, type Quote } from '@/services/api';
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isPaymentReturnUrl(url: string) {
+  return (
+    url.includes('suredriver://') ||
+    url.includes('/payments/return') ||
+    url.includes('orderReference=')
+  );
+}
 
 export default function BookConfirm() {
   const params = useLocalSearchParams<{
@@ -63,7 +75,8 @@ export default function BookConfirm() {
       });
       setBookingId(booking.id);
 
-      const checkout = await api.checkout(booking.id, 'suredriver://payment/success');
+      const callbackUrl = `${getApiUrl()}/payments/return?bookingId=${encodeURIComponent(booking.id)}`;
+      const checkout = await api.checkout(booking.id, callbackUrl);
       if (checkout.mock) {
         setMockCheckout({
           orderReference: checkout.orderReference,
@@ -76,6 +89,33 @@ export default function BookConfirm() {
       Alert.alert('Error', e instanceof Error ? e.message : 'Payment failed');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const finishPayment = async (id: string) => {
+    if (!token) return;
+    setApiToken(token);
+    setPaying(true);
+    try {
+      for (let attempt = 0; attempt < 10; attempt++) {
+        const result = await api.confirmPayment(id);
+        if (result.status === 'paid' || result.paymentStatus === 'paid') {
+          setCheckoutUrl(null);
+          router.replace(`/(owner)/trips/${id}`);
+          return;
+        }
+        await sleep(2000);
+      }
+      setCheckoutUrl(null);
+      Alert.alert(
+        'Payment processing',
+        'Nomba is still confirming your payment. Open your trip to check again in a moment.',
+        [{ text: 'View trip', onPress: () => router.replace(`/(owner)/trips/${id}`) }],
+      );
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm payment');
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -149,32 +189,32 @@ export default function BookConfirm() {
 
       <Modal visible={!!checkoutUrl} animationType="slide">
         <View className="flex-1 pt-12">
-          {checkoutUrl && (
+          {paying ? (
+            <View className="flex-1 items-center justify-center p-6">
+              <Text className="text-xl text-center">Confirming your payment…</Text>
+            </View>
+          ) : null}
+          {checkoutUrl && !paying ? (
             <WebView
               source={{ uri: checkoutUrl }}
-              onNavigationStateChange={async (nav) => {
-                if (!bookingId || !token) return;
-                if (!nav.url.includes('suredriver')) return;
-                setCheckoutUrl(null);
-                setApiToken(token);
-                try {
-                  const booking = await api.getBooking(bookingId);
-                  if (booking.status === 'paid') {
-                    router.replace(`/(owner)/trips/${bookingId}`);
-                    return;
-                  }
-                  Alert.alert(
-                    'Payment processing',
-                    'Nomba is confirming your payment. Check your trip in a moment.',
-                    [{ text: 'View trip', onPress: () => router.replace(`/(owner)/trips/${bookingId}`) }],
-                  );
-                } catch {
-                  router.replace(`/(owner)/trips/${bookingId}`);
-                }
+              onNavigationStateChange={(nav) => {
+                if (!bookingId || !token || paying) return;
+                if (!isPaymentReturnUrl(nav.url)) return;
+                finishPayment(bookingId).catch(() => undefined);
               }}
             />
-          )}
-          <AccessibleButton title="Close" variant="outline" className="m-4" onPress={() => setCheckoutUrl(null)} />
+          ) : null}
+          {!paying ? (
+            <AccessibleButton
+              title="Close"
+              variant="outline"
+              className="m-4"
+              onPress={() => {
+                if (bookingId) finishPayment(bookingId).catch(() => undefined);
+                else setCheckoutUrl(null);
+              }}
+            />
+          ) : null}
         </View>
       </Modal>
     </View>

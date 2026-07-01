@@ -194,11 +194,19 @@ export class NombaService {
       },
     });
 
-    const json = await this.parseResponse<{ status?: string; transactionId?: string }>(res);
-    const status = json.data?.status?.toUpperCase();
+    const json = (await res.json()) as NombaApiResponse<{
+      status?: string;
+      transactionId?: string;
+    }>;
+    if (!res.ok || json.code !== '00' || !json.data) {
+      this.logger.debug(`Nomba verify pending for ${orderReference}: ${json.description ?? res.status}`);
+      return { verified: false };
+    }
+
+    const status = json.data.status?.toUpperCase();
     return {
       verified: status === 'SUCCESS',
-      transactionId: json.data?.transactionId,
+      transactionId: json.data.transactionId,
     };
   }
 

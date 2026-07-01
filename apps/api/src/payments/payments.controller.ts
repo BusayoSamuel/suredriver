@@ -1,12 +1,16 @@
 import {
   Body,
   Controller,
+  Get,
   Headers,
   Param,
   Post,
+  Query,
+  Res,
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { IsOptional, IsString } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { CurrentUser, JwtAuthGuard, JwtPayload, Roles } from '../auth/jwt-auth.guard';
@@ -42,6 +46,33 @@ export class PaymentsController {
   @Roles(UserRole.owner)
   mockConfirm(@CurrentUser() user: JwtPayload, @Param('bookingId') bookingId: string) {
     return this.paymentsService.confirmMockPayment(user.sub, bookingId);
+  }
+
+  @Post('bookings/:bookingId/confirm')
+  @UseGuards(JwtAuthGuard)
+  @Roles(UserRole.owner)
+  confirm(
+    @CurrentUser() user: JwtPayload,
+    @Param('bookingId') bookingId: string,
+  ) {
+    return this.paymentsService.confirmCheckoutPayment(user.sub, bookingId);
+  }
+
+  @Get('return')
+  paymentReturn(@Query('bookingId') bookingId: string, @Res() res: Response) {
+    const id = bookingId ?? '';
+    const deepLink = `suredriver://payment/success?bookingId=${encodeURIComponent(id)}`;
+    res.type('html').send(`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Payment complete</title>
+<meta http-equiv="refresh" content="0;url=${deepLink}"/>
+</head><body style="font-family:system-ui;text-align:center;padding:2rem">
+<p>Payment complete. Returning to SureDriver…</p>
+<p><a href="${deepLink}">Tap here if the app does not open</a></p>
+<script>window.location.href=${JSON.stringify(deepLink)};</script>
+</body></html>`);
   }
 
   @Post('webhooks/nomba')
