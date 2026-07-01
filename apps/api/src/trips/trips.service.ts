@@ -100,9 +100,17 @@ export class TripsService {
       data: { bookingId },
     });
 
-    await this.payments.triggerDriverPayout(bookingId);
+    const payout = await this.payments.triggerDriverPayout(bookingId);
 
-    return { ...updated, actualMinutes };
+    return {
+      ...updated,
+      actualMinutes,
+      payout: {
+        success: payout.success,
+        transferId: payout.transferId,
+        amountKobo: booking.driverPayoutKobo,
+      },
+    };
   }
 
   private async getDriverBooking(driverId: string, bookingId: string) {

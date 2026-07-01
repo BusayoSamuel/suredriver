@@ -7,6 +7,7 @@
     "build:api": "pnpm --filter @suredriver/api build",
     "db:generate": "pnpm --filter @suredriver/api prisma:generate",
     "db:migrate": "pnpm --filter @suredriver/api prisma:migrate",
+    "db:migrate:deploy": "pnpm --filter @suredriver/api prisma:migrate:deploy",
     "db:seed": "pnpm --filter @suredriver/api prisma:seed",
     "docker:up": "docker compose up -d"
   },

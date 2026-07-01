@@ -64,12 +64,21 @@ For a physical device, set `EXPO_PUBLIC_API_URL` to your machine's LAN IP (e.g. 
 
 Login screen hint: `08011111111` / PIN `1234` (owner).
 
+## Nomba checkout & payout demo
+
+With `NOMBA_MOCK=true` (default), the full payment loop runs without real money:
+
+1. **Owner** taps **Pay with Nomba** → in-app Nomba Checkout demo → order ref + txn ID on trip screen
+2. **Driver** completes trip → Nomba Transfers payout with transfer ID on earnings
+
+See **[docs/NOMBA_DEMO.md](docs/NOMBA_DEMO.md)** for the 5-minute demo script and sandbox setup.
+
 ## End-to-end flow
 
-1. **Owner** logs in → Book a driver → pick duration → enter address → Pay & confirm (mock payment in dev).
-2. **Driver** logs in → Go online → Accept job → En route → Start trip → End trip.
-3. **Owner** sees trip status timeline on trip detail screen; can rate driver after completion.
-4. **Driver** receives automated payout (mock Nomba transfer in dev).
+1. **Owner** logs in → Find a driver → Submit → **Pay with Nomba** (checkout demo in mock mode).
+2. **Driver** logs in → Accept job → En route → Start trip → End trip (Nomba payout).
+3. **Owner** sees trip status + **Payment** card (Nomba order ref, txn ID).
+4. **Driver** sees **Payout** card and transfer IDs on **My earnings**.
 
 ## Pricing (duration tiers)
 

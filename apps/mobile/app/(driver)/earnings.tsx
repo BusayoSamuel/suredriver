@@ -66,24 +66,31 @@ export default function DriverEarnings() {
                 return (
                   <View
                     key={trip.id}
-                    className="bg-white border-2 border-gray-200 rounded-xl px-4 py-3 mb-2 flex-row items-center justify-between"
+                    className="bg-white border-2 border-gray-200 rounded-xl px-4 py-3 mb-2"
                   >
-                    <Text className="text-lg font-semibold text-primary">
-                      {formatNaira(trip.driverPayoutKobo)}
-                    </Text>
-                    <View
-                      className={`rounded-xl px-3 py-1 border-2 ${
-                        paid ? 'border-primary bg-green-50' : 'border-gray-200 bg-surface'
-                      }`}
-                    >
-                      <Text
-                        className={`text-base font-semibold ${
-                          paid ? 'text-primary' : 'text-gray-600'
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-lg font-semibold text-primary">
+                        {formatNaira(trip.driverPayoutKobo)}
+                      </Text>
+                      <View
+                        className={`rounded-xl px-3 py-1 border-2 ${
+                          paid ? 'border-primary bg-green-50' : 'border-gray-200 bg-surface'
                         }`}
                       >
-                        {payoutLabel(trip.payoutStatus)}
-                      </Text>
+                        <Text
+                          className={`text-base font-semibold ${
+                            paid ? 'text-primary' : 'text-gray-600'
+                          }`}
+                        >
+                          {payoutLabel(trip.payoutStatus)}
+                        </Text>
+                      </View>
                     </View>
+                    {trip.nombaTransferId ? (
+                      <Text className="text-sm text-gray-500 mt-2">
+                        Nomba: {trip.nombaTransferId}
+                      </Text>
+                    ) : null}
                   </View>
                 );
               })

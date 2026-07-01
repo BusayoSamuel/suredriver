@@ -114,6 +114,7 @@ export class DriversService {
         driverPayoutKobo: b.driverPayoutKobo,
         completedAt: b.updatedAt,
         payoutStatus: b.payment?.payoutStatus,
+        nombaTransferId: b.payment?.nombaTransferId,
       })),
     };
   }

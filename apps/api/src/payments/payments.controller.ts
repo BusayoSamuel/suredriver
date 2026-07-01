@@ -1,7 +1,16 @@
-import { Body, Controller, Headers, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Headers,
+  Param,
+  Post,
+  UnauthorizedException,
+  UseGuards,
+} from '@nestjs/common';
 import { IsOptional, IsString } from 'class-validator';
 import { UserRole } from '@prisma/client';
 import { CurrentUser, JwtAuthGuard, JwtPayload, Roles } from '../auth/jwt-auth.guard';
+import { NombaService } from './nomba.service';
 import { PaymentsService } from './payments.service';
 
 class CheckoutDto {
@@ -12,7 +21,10 @@ class CheckoutDto {
 
 @Controller('payments')
 export class PaymentsController {
-  constructor(private paymentsService: PaymentsService) {}
+  constructor(
+    private paymentsService: PaymentsService,
+    private nomba: NombaService,
+  ) {}
 
   @Post('bookings/:bookingId/checkout')
   @UseGuards(JwtAuthGuard)
@@ -34,9 +46,14 @@ export class PaymentsController {
 
   @Post('webhooks/nomba')
   nombaWebhook(
-    @Headers('nomba-signature') _signature: string,
+    @Headers('nomba-signature') signature: string,
+    @Headers('nomba-timestamp') timestamp: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.paymentsService.handleWebhook(body as Parameters<PaymentsService['handleWebhook']>[0]);
+    const payload = body as Parameters<PaymentsService['handleWebhook']>[0];
+    if (!this.nomba.verifyWebhookSignature(payload, signature, timestamp)) {
+      throw new UnauthorizedException('Invalid Nomba webhook signature');
+    }
+    return this.paymentsService.handleWebhook(payload);
   }
 }

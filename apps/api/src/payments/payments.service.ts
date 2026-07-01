@@ -68,7 +68,16 @@ export class PaymentsService {
       include: { payment: true, trip: true },
     });
     if (!booking || booking.ownerId !== ownerId) throw new NotFoundException();
-    return this.markPaymentSuccess(bookingId, booking.payment!.nombaOrderReference ?? bookingId);
+    const payment = await this.markPaymentSuccess(
+      bookingId,
+      booking.payment!.nombaOrderReference ?? bookingId,
+    );
+    return {
+      bookingId,
+      status: 'paid',
+      nombaOrderReference: payment?.nombaOrderReference,
+      nombaTransactionId: payment?.nombaTransactionId,
+    };
   }
 
   async handleWebhook(payload: {

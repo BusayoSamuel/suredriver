@@ -5,6 +5,7 @@ import { AccessibleButton } from '@/components/AccessibleButton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { TripStatusTimeline } from '@/components/TripStatusTimeline';
 import { TripDetailsCard } from '@/components/TripDetailsCard';
+import { NombaPaymentCard } from '@/components/NombaPaymentCard';
 import { useAuth } from '@/context/AuthContext';
 import { api, setApiToken, type Booking } from '@/services/api';
 import { formatNaira } from '@suredriver/shared-types';
@@ -56,9 +57,20 @@ export default function DriverJob() {
   const end = async () => {
     if (!id || !token) return;
     setApiToken(token);
-    await api.endTrip(id);
-    Alert.alert('Trip completed', 'Payout will be sent to your bank.');
-    router.dismissTo('/(driver)/home');
+    try {
+      const result = await api.endTrip(id);
+      const payout = result.payout;
+      const amount = payout?.amountKobo ?? booking?.driverPayoutKobo;
+      Alert.alert(
+        'Trip completed',
+        payout?.success
+          ? `Nomba sent ${amount ? formatNaira(amount) : 'your payout'} to your bank.\nTransfer: ${payout.transferId ?? '—'}`
+          : 'Trip completed. Payout is being processed.',
+        [{ text: 'OK', onPress: () => router.dismissTo('/(driver)/home') }],
+      );
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to end trip');
+    }
   };
 
   const openMaps = async () => {
@@ -103,6 +115,18 @@ export default function DriverJob() {
           currentStatus={booking.status}
           history={booking.trip?.statusHistory}
         />
+
+        {booking.status === 'completed' && booking.payment?.payoutStatus ? (
+          <View className="mt-6">
+            <NombaPaymentCard
+              title="Payout"
+              mode="driver"
+              priceKobo={booking.priceKobo}
+              driverPayoutKobo={booking.driverPayoutKobo}
+              payment={booking.payment}
+            />
+          </View>
+        ) : null}
 
         <View className="mt-6 gap-3">
           {!booking.driver && (

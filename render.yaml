@@ -3,7 +3,7 @@ services:
     name: suredriver-api
     env: node
     plan: free
-    buildCommand: pnpm install && pnpm --filter @suredriver/api build
+    buildCommand: pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build && cd apps/api && npx prisma migrate deploy
     startCommand: cd apps/api && node dist/src/main.js
     healthCheckPath: /health
     envVars:
@@ -14,12 +14,14 @@ services:
       - key: NOMBA_MOCK
         value: "false"
       - key: NOMBA_BASE_URL
-        value: "https://api.nomba.com"
+        value: "https://sandbox.nomba.com"
       - key: NOMBA_CLIENT_ID
         sync: false
       - key: NOMBA_CLIENT_SECRET
         sync: false
-      - key: NOMBA_ACCOUNT_ID
+      - key: NOMBA_PARENT_ACCOUNT_ID
+        sync: false
+      - key: NOMBA_SUB_ACCOUNT_ID
         sync: false
       - key: NOMBA_WEBHOOK_SECRET
         sync: false

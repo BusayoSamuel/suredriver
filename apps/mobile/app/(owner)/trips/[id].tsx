@@ -3,6 +3,7 @@ import { View, Text, ScrollView, TextInput, Alert } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { TripStatusTimeline } from '@/components/TripStatusTimeline';
 import { TripDetailsCard } from '@/components/TripDetailsCard';
+import { NombaPaymentCard } from '@/components/NombaPaymentCard';
 import { AccessibleButton } from '@/components/AccessibleButton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { useAuth } from '@/context/AuthContext';
@@ -61,6 +62,17 @@ export default function TripDetail() {
       )}
 
       <TripDetailsCard booking={booking} />
+
+      {booking.payment?.status === 'paid' ? (
+        <NombaPaymentCard
+          title="Payment"
+          mode="owner"
+          priceKobo={booking.priceKobo}
+          platformFeeKobo={booking.platformFeeKobo}
+          driverPayoutKobo={booking.driverPayoutKobo}
+          payment={booking.payment}
+        />
+      ) : null}
 
       <TripStatusTimeline
         currentStatus={booking.status}

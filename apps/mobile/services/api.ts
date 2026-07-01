@@ -62,13 +62,21 @@ export const api = {
     request<Booking>('/bookings', { method: 'POST', body: JSON.stringify(body) }),
   listBookings: () => request<Booking[]>('/bookings'),
   getBooking: (id: string) => request<Booking>(`/bookings/${id}`),
-  checkout: (bookingId: string) =>
-    request<{ checkoutLink: string; mock?: boolean }>(`/payments/bookings/${bookingId}/checkout`, {
-      method: 'POST',
-      body: JSON.stringify({}),
-    }),
+  checkout: (bookingId: string, callbackUrl?: string) =>
+    request<{ checkoutLink: string; orderReference: string; mock?: boolean }>(
+      `/payments/bookings/${bookingId}/checkout`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ callbackUrl }),
+      },
+    ),
   mockConfirmPayment: (bookingId: string) =>
-    request(`/payments/bookings/${bookingId}/mock-confirm`, { method: 'POST' }),
+    request<{
+      bookingId: string;
+      status: string;
+      nombaOrderReference?: string;
+      nombaTransactionId?: string;
+    }>(`/payments/bookings/${bookingId}/mock-confirm`, { method: 'POST' }),
   reviewBooking: (id: string, rating: number, comment?: string) =>
     request(`/bookings/${id}/review`, {
       method: 'POST',
@@ -92,7 +100,9 @@ export const api = {
   startTrip: (bookingId: string) =>
     request(`/trips/${bookingId}/start`, { method: 'POST' }),
   endTrip: (bookingId: string) =>
-    request(`/trips/${bookingId}/end`, { method: 'POST' }),
+    request<{
+      payout?: { success: boolean; transferId?: string; amountKobo: number };
+    }>(`/trips/${bookingId}/end`, { method: 'POST' }),
   driverEarnings: () => request<EarningsResponse>('/drivers/earnings'),
   registerPushToken: (token: string) =>
     request('/notifications/register', {
@@ -140,10 +150,19 @@ export interface Booking {
   durationType: string;
   durationHours: number;
   priceKobo: number;
+  platformFeeKobo: number;
   driverPayoutKobo: number;
   vehicle?: Vehicle;
   driver?: { fullName?: string | null; phone?: string };
-  payment?: { status: string; payoutStatus?: string; checkoutLink?: string };
+  payment?: {
+    status: string;
+    payoutStatus?: string;
+    checkoutLink?: string;
+    nombaOrderReference?: string | null;
+    nombaTransactionId?: string | null;
+    nombaTransferId?: string | null;
+    payoutAmountKobo?: number | null;
+  };
   trip?: { startedAt?: string; endedAt?: string; statusHistory?: StatusEvent[] };
   review?: { rating: number } | null;
 }
@@ -183,5 +202,10 @@ export interface EarningsResponse {
   totalEarningsKobo: number;
   ratingAvg: number;
   ratingCount: number;
-  trips: { id: string; driverPayoutKobo: number; payoutStatus?: string }[];
+  trips: {
+    id: string;
+    driverPayoutKobo: number;
+    payoutStatus?: string;
+    nombaTransferId?: string | null;
+  }[];
 }
