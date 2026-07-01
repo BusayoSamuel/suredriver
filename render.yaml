@@ -3,7 +3,7 @@ services:
     name: suredriver-api
     env: node
     plan: free
-    buildCommand: pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build && cd apps/api && npx prisma migrate deploy
+    buildCommand: pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build
     startCommand: cd apps/api && node dist/src/main.js
     healthCheckPath: /health
     envVars:

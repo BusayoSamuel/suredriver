@@ -151,7 +151,12 @@ Free tier spins down after 15 min idle (~1 min cold start on first request).
 
 4. **Build command** (if not using blueprint):
    ```bash
-   pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build && cd apps/api && npx prisma migrate deploy
+   pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build
+   ```
+
+   Run migrations separately from your Mac (session pooler, port 5432) — not during Render build:
+   ```bash
+   pnpm db:migrate:deploy
    ```
 
 5. **Start command:**
