@@ -13,12 +13,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isPaymentReturnUrl(url: string) {
-  return (
-    url.includes('suredriver://') ||
-    url.includes('/payments/return') ||
-    url.includes('orderReference=')
-  );
+function isNombaReturnUrl(url: string, apiBase: string) {
+  try {
+    const parsed = new URL(url);
+    const base = new URL(apiBase);
+    return (
+      parsed.origin === base.origin &&
+      parsed.pathname === '/payments/return' &&
+      parsed.searchParams.has('bookingId')
+    );
+  } catch {
+    return false;
+  }
 }
 
 export default function BookConfirm() {
@@ -108,15 +114,18 @@ export default function BookConfirm() {
       }
       setCheckoutUrl(null);
       Alert.alert(
-        'Payment processing',
-        'Nomba is still confirming your payment. Open your trip to check again in a moment.',
-        [{ text: 'View trip', onPress: () => router.replace(`/(owner)/trips/${id}`) }],
+        'Payment not completed',
+        'Nomba has not confirmed this payment yet. You can try again when ready.',
       );
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm payment');
     } finally {
       setPaying(false);
     }
+  };
+
+  const cancelCheckout = () => {
+    setCheckoutUrl(null);
   };
 
   const completeMockPayment = async () => {
@@ -199,20 +208,17 @@ export default function BookConfirm() {
               source={{ uri: checkoutUrl }}
               onNavigationStateChange={(nav) => {
                 if (!bookingId || !token || paying) return;
-                if (!isPaymentReturnUrl(nav.url)) return;
+                if (!isNombaReturnUrl(nav.url, getApiUrl())) return;
                 finishPayment(bookingId).catch(() => undefined);
               }}
             />
           ) : null}
           {!paying ? (
             <AccessibleButton
-              title="Close"
+              title="Cancel payment"
               variant="outline"
               className="m-4"
-              onPress={() => {
-                if (bookingId) finishPayment(bookingId).catch(() => undefined);
-                else setCheckoutUrl(null);
-              }}
+              onPress={cancelCheckout}
             />
           ) : null}
         </View>

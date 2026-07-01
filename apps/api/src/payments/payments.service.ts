@@ -99,7 +99,6 @@ export class PaymentsService {
         bookingId,
         verification.transactionId,
         false,
-        true,
       );
     }
   }
@@ -152,7 +151,6 @@ export class PaymentsService {
     bookingOrOrderRef: string,
     transactionId?: string | null,
     byOrderRef = false,
-    trusted = false,
   ) {
     const payment = await this.prisma.payment.findFirst({
       where: byOrderRef
@@ -162,7 +160,7 @@ export class PaymentsService {
     });
     if (!payment || payment.status === PaymentStatus.paid) return payment;
 
-    if (!this.nomba.mockMode && payment.nombaOrderReference && !trusted) {
+    if (!this.nomba.mockMode && payment.nombaOrderReference) {
       const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
       if (!verification.verified) {
         this.logger.warn(`Payment verification failed for ${payment.nombaOrderReference}`);

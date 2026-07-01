@@ -204,9 +204,11 @@ export class NombaService {
     }
 
     const status = json.data.status?.toUpperCase();
+    const transactionId = json.data.transactionId;
+    const verified = status === 'SUCCESS' && !!transactionId;
     return {
-      verified: status === 'SUCCESS',
-      transactionId: json.data.transactionId,
+      verified,
+      transactionId,
     };
   }
 
