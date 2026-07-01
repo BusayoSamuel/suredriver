@@ -77,6 +77,7 @@ export default function TripDetail() {
       <TripStatusTimeline
         currentStatus={booking.status}
         history={booking.trip?.statusHistory}
+        paymentStatus={booking.payment?.status}
       />
 
       {booking.status === 'completed' && !booking.review && (

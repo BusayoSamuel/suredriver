@@ -114,6 +114,7 @@ export default function DriverJob() {
         <TripStatusTimeline
           currentStatus={booking.status}
           history={booking.trip?.statusHistory}
+          paymentStatus={booking.payment?.status}
         />
 
         {booking.status === 'completed' && booking.payment?.payoutStatus ? (

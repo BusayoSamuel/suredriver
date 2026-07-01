@@ -3,6 +3,7 @@ import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { DurationType, UserRole } from '@prisma/client';
 import { CurrentUser, JwtAuthGuard, JwtPayload, Roles } from '../auth/jwt-auth.guard';
 import { BookingsService } from './bookings.service';
+import { PaymentsService } from '../payments/payments.service';
 
 class CreateBookingDto {
   @IsString()
@@ -37,7 +38,10 @@ class ReviewDto {
 @Controller('bookings')
 @UseGuards(JwtAuthGuard)
 export class BookingsController {
-  constructor(private bookingsService: BookingsService) {}
+  constructor(
+    private bookingsService: BookingsService,
+    private paymentsService: PaymentsService,
+  ) {}
 
   @Get('quote')
   quote(@Query('durationType') durationType: DurationType) {
@@ -59,7 +63,10 @@ export class BookingsController {
   }
 
   @Get(':id')
-  getOne(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+  async getOne(@CurrentUser() user: JwtPayload, @Param('id') id: string) {
+    if (user.role === UserRole.owner) {
+      await this.paymentsService.syncPaymentFromNomba(id).catch(() => undefined);
+    }
     return this.bookingsService.getById(user.sub, user.role, id);
   }
 

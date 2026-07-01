@@ -80,6 +80,29 @@ export class PaymentsService {
     };
   }
 
+  async syncPaymentFromNomba(bookingId: string) {
+    const payment = await this.prisma.payment.findUnique({
+      where: { bookingId },
+      include: { booking: { include: { trip: true } } },
+    });
+    if (
+      !payment ||
+      payment.status !== PaymentStatus.pending ||
+      !payment.nombaOrderReference
+    ) {
+      return;
+    }
+
+    const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
+    if (verification.verified) {
+      await this.markPaymentSuccess(
+        bookingId,
+        verification.transactionId,
+        false,
+      );
+    }
+  }
+
   async handleWebhook(payload: {
     event_type?: string;
     data?: {
