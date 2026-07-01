@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import * as SecureStore from 'expo-secure-store';
 import type { UserRole } from '@suredriver/shared-types';
+import { api, setApiToken } from '@/services/api';
 
 export interface AuthUser {
   id: string;
@@ -32,8 +33,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const storedToken = await SecureStore.getItemAsync(TOKEN_KEY);
       const storedUser = await SecureStore.getItemAsync(USER_KEY);
       if (storedToken && storedUser) {
-        setToken(storedToken);
-        setUser(JSON.parse(storedUser));
+        setApiToken(storedToken);
+        try {
+          await api.getMe();
+          setToken(storedToken);
+          setUser(JSON.parse(storedUser));
+        } catch {
+          await SecureStore.deleteItemAsync(TOKEN_KEY);
+          await SecureStore.deleteItemAsync(USER_KEY);
+        }
       }
       setLoading(false);
     })();
