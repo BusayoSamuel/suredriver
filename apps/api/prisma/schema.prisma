@@ -1,0 +1,191 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  owner
+  driver
+  admin
+}
+
+enum VerificationStatus {
+  pending
+  approved
+  rejected
+}
+
+enum DurationType {
+  hourly
+  half_day
+  full_day
+}
+
+enum BookingStatus {
+  requested
+  awaiting_payment
+  paid
+  driver_assigned
+  driver_en_route
+  in_progress
+  completed
+  cancelled
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum PayoutStatus {
+  pending
+  processing
+  paid
+  failed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  pinHash      String?
+  role         UserRole
+  fullName     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  invite       Invite?
+  ownerProfile OwnerProfile?
+  driverProfile DriverProfile?
+  pushTokens   PushToken[]
+  bookingsAsOwner Booking[] @relation("OwnerBookings")
+  bookingsAsDriver Booking[] @relation("DriverBookings")
+  reviewsGiven Review[] @relation("ReviewsGiven")
+  reviewsReceived Review[] @relation("ReviewsReceived")
+}
+
+model Invite {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  role      UserRole
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+  userId    String?  @unique
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+model OwnerProfile {
+  id               String  @id @default(cuid())
+  userId           String  @unique
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  defaultAddress   String?
+  emergencyContact String?
+  vehicles         Vehicle[]
+}
+
+model DriverProfile {
+  id                 String             @id @default(cuid())
+  userId             String             @unique
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verificationStatus VerificationStatus @default(pending)
+  bankCode           String?
+  bankName           String?
+  accountNumber      String?
+  accountName        String?
+  isOnline           Boolean            @default(false)
+  ratingAvg          Float              @default(0)
+  ratingCount        Int                @default(0)
+  totalEarningsKobo  Int                @default(0)
+}
+
+model Vehicle {
+  id             String       @id @default(cuid())
+  ownerProfileId String
+  ownerProfile   OwnerProfile @relation(fields: [ownerProfileId], references: [id], onDelete: Cascade)
+  make           String
+  model          String
+  plateNumber    String
+  color          String?
+  bookings       Booking[]
+  createdAt      DateTime     @default(now())
+}
+
+model Booking {
+  id               String        @id @default(cuid())
+  ownerId          String
+  owner            User          @relation("OwnerBookings", fields: [ownerId], references: [id])
+  driverId         String?
+  driver           User?         @relation("DriverBookings", fields: [driverId], references: [id])
+  vehicleId        String
+  vehicle          Vehicle       @relation(fields: [vehicleId], references: [id])
+  durationType     DurationType
+  durationHours    Int
+  pickupAddress    String
+  notes            String?
+  status           BookingStatus @default(requested)
+  priceKobo        Int
+  platformFeeKobo  Int
+  driverPayoutKobo Int
+  scheduledAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  trip    Trip?
+  payment Payment?
+  review  Review?
+}
+
+model Trip {
+  id            String   @id @default(cuid())
+  bookingId     String   @unique
+  booking       Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  startedAt     DateTime?
+  endedAt       DateTime?
+  statusHistory Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Payment {
+  id                   String        @id @default(cuid())
+  bookingId            String        @unique
+  booking              Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  amountKobo           Int
+  status               PaymentStatus @default(pending)
+  nombaOrderReference  String?       @unique
+  nombaTransactionId   String?
+  checkoutLink         String?
+  payoutStatus         PayoutStatus  @default(pending)
+  nombaTransferId      String?
+  payoutAmountKobo     Int?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  bookingId  String   @unique
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  reviewerId String
+  reviewer   User     @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  revieweeId String
+  reviewee   User     @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+  rating     Int
+  comment    String?
+  createdAt  DateTime @default(now())
+}
+
+model PushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String
+  createdAt DateTime @default(now())
+
+  @@unique([userId, token])
+}

@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: suredriver-api
+    runtime: node
+    plan: free
+    buildCommand: cd ../.. && pnpm install && pnpm --filter @suredriver/shared-types build && pnpm --filter @suredriver/api build
+    startCommand: cd ../.. && pnpm --filter @suredriver/api start:prod
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NOMBA_MOCK
+        value: "false"

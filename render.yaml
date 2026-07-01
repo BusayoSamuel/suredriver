@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: suredriver-api
+    env: node
+    plan: free
+    buildCommand: pnpm install && pnpm --filter @suredriver/api build
+    startCommand: cd apps/api && node dist/src/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NOMBA_MOCK
+        value: "false"
+      - key: NOMBA_BASE_URL
+        value: "https://api.nomba.com"
+      - key: NOMBA_CLIENT_ID
+        sync: false
+      - key: NOMBA_CLIENT_SECRET
+        sync: false
+      - key: NOMBA_ACCOUNT_ID
+        sync: false
+      - key: NOMBA_WEBHOOK_SECRET
+        sync: false
+      - key: PLATFORM_FEE_PERCENT
+        value: "0.15"

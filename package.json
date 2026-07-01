@@ -1,0 +1,16 @@
+{
+  "name": "suredriver",
+  "private": true,
+  "scripts": {
+    "dev:api": "pnpm --filter @suredriver/api dev",
+    "dev:mobile": "pnpm --filter @suredriver/mobile start",
+    "build:api": "pnpm --filter @suredriver/api build",
+    "db:generate": "pnpm --filter @suredriver/api prisma:generate",
+    "db:migrate": "pnpm --filter @suredriver/api prisma:migrate",
+    "db:seed": "pnpm --filter @suredriver/api prisma:seed",
+    "docker:up": "docker compose up -d"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
