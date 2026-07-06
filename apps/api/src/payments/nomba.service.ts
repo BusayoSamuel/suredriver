@@ -177,10 +177,21 @@ export class NombaService {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
     }
 
+    const parentResult = await this.fetchTransaction(orderReference, false);
+    if (parentResult.verified) return parentResult;
+
+    if (this.subAccountId) {
+      return this.fetchTransaction(orderReference, true);
+    }
+
+    return parentResult;
+  }
+
+  private async fetchTransaction(orderReference: string, useSubAccount: boolean) {
     const token = await this.getAccessToken();
     const accountId = this.requireParentAccountId();
 
-    const path = this.subAccountId
+    const path = useSubAccount
       ? `/v1/transactions/accounts/${this.subAccountId}/single`
       : '/v1/transactions/accounts/single';
     const url = new URL(`${this.baseUrl}${path}`);
@@ -199,8 +210,10 @@ export class NombaService {
       transactionId?: string;
     }>;
     if (!res.ok || json.code !== '00' || !json.data) {
-      this.logger.debug(`Nomba verify pending for ${orderReference}: ${json.description ?? res.status}`);
-      return { verified: false };
+      this.logger.debug(
+        `Nomba verify pending (${useSubAccount ? 'sub' : 'parent'}) for ${orderReference}: ${json.description ?? res.status}`,
+      );
+      return { verified: false as const };
     }
 
     const status = json.data.status?.toUpperCase();
@@ -208,10 +221,7 @@ export class NombaService {
     const verified =
       (status === 'SUCCESS' || status === 'SUCCESSFUL' || status === 'COMPLETED') &&
       !!transactionId;
-    return {
-      verified,
-      transactionId,
-    };
+    return { verified, transactionId };
   }
 
   verifyWebhookSignature(

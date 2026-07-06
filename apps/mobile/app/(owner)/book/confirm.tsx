@@ -15,6 +15,57 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function isBookingPaid(bookingId: string) {
+  const result = await api.confirmPayment(bookingId);
+  return result.status === 'paid' || result.paymentStatus === 'paid';
+}
+
+/** Nomba sandbox may redirect to nomba.com instead of our callback — poll and close browser when paid. */
+async function openNombaCheckout(checkoutLink: string, bookingId: string) {
+  const returnUrl = `${getApiUrl()}/payments/return`;
+  let stopPoll = false;
+  let confirmed = false;
+
+  const pollForPayment = async () => {
+    await sleep(2500);
+    while (!stopPoll) {
+      try {
+        if (await isBookingPaid(bookingId)) {
+          confirmed = true;
+          stopPoll = true;
+          await WebBrowser.dismissBrowser().catch(() => undefined);
+          return;
+        }
+      } catch {
+        // keep polling through transient API errors
+      }
+      if (stopPoll) break;
+      await sleep(2000);
+    }
+  };
+
+  const pollTask = pollForPayment();
+
+  try {
+    const session = await WebBrowser.openAuthSessionAsync(checkoutLink, returnUrl);
+    stopPoll = true;
+
+    if (!confirmed) {
+      if (session.type === 'success' && (await isBookingPaid(bookingId))) {
+        confirmed = true;
+      } else {
+        await sleep(1500);
+        confirmed = await isBookingPaid(bookingId);
+      }
+    }
+  } finally {
+    stopPoll = true;
+    await pollTask.catch(() => undefined);
+  }
+
+  return confirmed;
+}
+
 export default function BookConfirm() {
   const params = useLocalSearchParams<{
     durationType: string;
@@ -33,7 +84,7 @@ export default function BookConfirm() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
-  const confirmingRef = useRef(false);
+  const checkoutActiveRef = useRef(false);
 
   useEffect(() => {
     if (!token || !params.durationType) return;
@@ -41,34 +92,8 @@ export default function BookConfirm() {
     api.getQuote(params.durationType).then(setQuote).catch(() => undefined);
   }, [token, params.durationType]);
 
-  const finishPayment = async (id: string) => {
-    if (!token || confirmingRef.current) return;
-    confirmingRef.current = true;
-    setApiToken(token);
-    setPaying(true);
-    try {
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const result = await api.confirmPayment(id);
-        if (result.status === 'paid' || result.paymentStatus === 'paid') {
-          router.replace(`/(owner)/trips/${id}`);
-          return;
-        }
-        await sleep(2000);
-      }
-      Alert.alert(
-        'Payment not confirmed',
-        'Nomba has not confirmed this payment yet. Please try again in a moment.',
-      );
-    } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm payment');
-    } finally {
-      setPaying(false);
-      confirmingRef.current = false;
-    }
-  };
-
   const createAndPay = async () => {
-    if (!token) return;
+    if (!token || checkoutActiveRef.current) return;
     setApiToken(token);
     setLoading(true);
     try {
@@ -107,19 +132,20 @@ export default function BookConfirm() {
       }
 
       setLoading(false);
+      setPaying(true);
+      checkoutActiveRef.current = true;
 
-      const session = await WebBrowser.openAuthSessionAsync(
-        checkout.checkoutLink,
-        returnUrl,
-      );
+      const paid = await openNombaCheckout(checkout.checkoutLink, booking.id);
 
-      if (session.type === 'success') {
-        await finishPayment(booking.id);
+      if (paid) {
+        router.replace(`/(owner)/trips/${booking.id}`);
       }
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Payment failed');
     } finally {
+      checkoutActiveRef.current = false;
       setLoading(false);
+      setPaying(false);
     }
   };
 
@@ -148,7 +174,10 @@ export default function BookConfirm() {
       {paying ? (
         <View className="flex-1 items-center justify-center p-6 gap-4">
           <ActivityIndicator size="large" color="#1B4332" />
-          <Text className="text-xl text-center text-primary">Confirming your payment…</Text>
+          <Text className="text-xl text-center text-primary">Waiting for Nomba payment…</Text>
+          <Text className="text-base text-center text-gray-600">
+            The browser will close automatically when payment is confirmed.
+          </Text>
         </View>
       ) : (
         <ScrollView className="flex-1" contentContainerClassName="p-6">
