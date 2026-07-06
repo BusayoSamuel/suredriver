@@ -186,13 +186,16 @@ export class NombaService {
     );
   }
 
-  async verifyTransaction(orderReference: string) {
+  async verifyTransaction(orderReference: string, checkoutLink?: string | null) {
     if (this.mockMode) {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
     }
 
     if (this.isSandbox) {
-      const sandboxResult = await this.fetchSandboxCheckoutTransaction(orderReference);
+      const sandboxResult = await this.fetchSandboxCheckoutTransaction(
+        orderReference,
+        checkoutLink,
+      );
       if (sandboxResult.verified) return sandboxResult;
     }
 
@@ -206,32 +209,49 @@ export class NombaService {
     return parentResult;
   }
 
-  /** Sandbox checkout uses a dedicated lookup endpoint (not production /v1/checkout/transaction). */
-  private async fetchSandboxCheckoutTransaction(orderReference: string) {
-    const parentId = this.requireParentAccountId();
-    // Checkout orders credit the sub-account — try it first for sandbox lookups.
-    const accountIds = this.subAccountId ? [this.subAccountId, parentId] : [parentId];
-    const idTypes = ['orderReference', 'orderId'];
+  private extractCheckoutOrderId(checkoutLink?: string | null): string | null {
+    if (!checkoutLink) return null;
+    try {
+      const segment = new URL(checkoutLink).pathname.split('/').filter(Boolean).pop();
+      return segment || null;
+    } catch {
+      return null;
+    }
+  }
 
-    for (const accountId of accountIds) {
-      for (const idType of idTypes) {
-        const result = await this.fetchSandboxCheckoutOnce(orderReference, accountId, idType);
-        if (result.verified) return result;
-      }
+  /** Sandbox checkout uses GET /sandbox/checkout/transaction (not v1/checkout/transaction). */
+  private async fetchSandboxCheckoutTransaction(
+    orderReference: string,
+    checkoutLink?: string | null,
+  ) {
+    const accountId = this.requireParentAccountId();
+    const lookups: Array<{ idType: string; id: string }> = [
+      { idType: 'orderReference', id: orderReference },
+    ];
+
+    const checkoutOrderId = this.extractCheckoutOrderId(checkoutLink);
+    if (checkoutOrderId) {
+      lookups.push({ idType: 'orderId', id: checkoutOrderId });
+      lookups.push({ idType: 'ORDER_ID', id: checkoutOrderId });
+    }
+
+    for (const { idType, id } of lookups) {
+      const result = await this.fetchSandboxCheckoutOnce(id, accountId, idType);
+      if (result.verified) return result;
     }
 
     return { verified: false as const };
   }
 
   private async fetchSandboxCheckoutOnce(
-    orderReference: string,
+    id: string,
     accountId: string,
     idType: string,
   ) {
     const token = await this.getAccessToken();
     const url = new URL(`${this.baseUrl}/sandbox/checkout/transaction`);
     url.searchParams.set('idType', idType);
-    url.searchParams.set('id', orderReference);
+    url.searchParams.set('id', id);
 
     const res = await fetch(url, {
       method: 'GET',
@@ -254,9 +274,11 @@ export class NombaService {
       status?: string;
     }>;
     if (!res.ok || json.code !== '00' || !json.data) {
-      this.logger.debug(
-        `Nomba sandbox checkout verify pending (${idType}, ${accountId.slice(0, 8)}…) for ${orderReference}: ${json.description ?? res.status}`,
-      );
+      if (json.code !== '404') {
+        this.logger.debug(
+          `Nomba sandbox verify (${idType}) for ${id}: ${json.description ?? res.status}`,
+        );
+      }
       return { verified: false as const };
     }
 
@@ -271,7 +293,7 @@ export class NombaService {
     if (json.data.success === true) {
       return {
         verified: true as const,
-        transactionId: transactionId ?? `WEB-SANDBOX-${orderReference}`,
+        transactionId: transactionId ?? `WEB-SANDBOX-${id}`,
       };
     }
 

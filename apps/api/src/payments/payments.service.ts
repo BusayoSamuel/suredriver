@@ -93,7 +93,10 @@ export class PaymentsService {
       return;
     }
 
-    const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
+    const verification = await this.nomba.verifyTransaction(
+      payment.nombaOrderReference,
+      payment.checkoutLink,
+    );
     if (verification.verified) {
       await this.markPaymentSuccess(
         bookingId,
@@ -167,7 +170,10 @@ export class PaymentsService {
     if (!payment || payment.status === PaymentStatus.paid) return payment;
 
     if (!options?.skipVerify && !this.nomba.mockMode && payment.nombaOrderReference) {
-      const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
+      const verification = await this.nomba.verifyTransaction(
+        payment.nombaOrderReference,
+        payment.checkoutLink,
+      );
       if (!verification.verified) {
         this.logger.warn(`Payment verification failed for ${payment.nombaOrderReference}`);
         return payment;
