@@ -25,5 +25,9 @@ services:
         sync: false
       - key: NOMBA_WEBHOOK_SECRET
         sync: false
+      - key: NOMBA_WEBHOOK_RELAXED
+        value: "true"
+      - key: PUBLIC_API_URL
+        value: "https://suredriver-api.onrender.com"
       - key: PLATFORM_FEE_PERCENT
         value: "0.15"

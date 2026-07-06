@@ -24,6 +24,23 @@ class CheckoutDto {
   callbackUrl?: string;
 }
 
+function paymentCompleteHtml(deepLink: string) {
+  return `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Payment complete</title>
+<script>
+  setTimeout(function () {
+    window.location.replace(${JSON.stringify(deepLink)});
+  }, 400);
+</script>
+</head><body style="font-family:system-ui;text-align:center;padding:2rem">
+<p style="font-size:1.25rem;font-weight:600">Payment complete</p>
+<p>Returning to SureDriver…</p>
+</body></html>`;
+}
+
 @Controller('payments')
 export class PaymentsController {
   private readonly logger = new Logger(PaymentsController.name);
@@ -38,11 +55,15 @@ export class PaymentsController {
     signature: string | undefined,
     sigValue: string | undefined,
     timestamp: string | undefined,
+    source: string,
   ) {
     const payload = body as Parameters<PaymentsService['handleWebhook']>[0];
+    this.logger.log(
+      `Nomba webhook on ${source}: event=${payload.event_type ?? '?'} order=${payload.data?.order?.orderReference ?? '?'}`,
+    );
+
     const sig = signature ?? sigValue;
     if (!this.nomba.verifyWebhookSignature(payload, sig, timestamp)) {
-      this.logger.warn('Rejected Nomba webhook — invalid signature');
       throw new UnauthorizedException('Invalid Nomba webhook signature');
     }
     return this.paymentsService.handleWebhook(payload);
@@ -89,26 +110,10 @@ export class PaymentsController {
       ? `suredriver://payments/return?bookingId=${encodeURIComponent(bookingId)}`
       : 'suredriver://';
 
-    res.type('html').send(`<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Payment complete</title>
-<script>
-  setTimeout(function () {
-    window.location.replace(${JSON.stringify(deepLink)});
-  }, 400);
-</script>
-</head><body style="font-family:system-ui;text-align:center;padding:2rem">
-<p style="font-size:1.25rem;font-weight:600">Payment complete</p>
-<p>Returning to SureDriver…</p>
-</body></html>`);
+    res.type('html').send(paymentCompleteHtml(deepLink));
   }
 
-  /**
-   * Sandbox fires payment_success webhooks to the order callbackUrl (POST).
-   * Dashboard webhooks use POST /payments/webhooks/nomba instead.
-   */
+  /** Legacy: sandbox may POST to order callbackUrl if it was /payments/return. */
   @Post('return')
   paymentReturnWebhook(
     @Headers('nomba-signature') signature: string | undefined,
@@ -116,8 +121,31 @@ export class PaymentsController {
     @Headers('nomba-timestamp') timestamp: string | undefined,
     @Body() body: Record<string, unknown>,
   ) {
-    this.logger.log('Nomba webhook received on /payments/return');
-    return this.processNombaWebhook(body, signature, sigValue, timestamp);
+    return this.processNombaWebhook(body, signature, sigValue, timestamp, '/payments/return');
+  }
+
+  /** Browser redirect after checkout — Nomba appends ?orderReference=… */
+  @Get('webhooks/nomba')
+  async nombaWebhookRedirect(
+    @Query('orderReference') orderReference: string | undefined,
+    @Query('bookingId') bookingId: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.logger.log(`Nomba GET /payments/webhooks/nomba orderReference=${orderReference ?? '?'}`);
+
+    let resolvedBookingId = bookingId ?? null;
+    if (orderReference) {
+      const synced = await this.paymentsService.syncPaymentFromNombaByOrderReference(orderReference);
+      resolvedBookingId = resolvedBookingId ?? synced;
+    } else if (bookingId) {
+      await this.paymentsService.syncPaymentFromNomba(bookingId).catch(() => undefined);
+    }
+
+    const deepLink = resolvedBookingId
+      ? `suredriver://payments/return?bookingId=${encodeURIComponent(resolvedBookingId)}`
+      : 'suredriver://';
+
+    res.type('html').send(paymentCompleteHtml(deepLink));
   }
 
   @Post('webhooks/nomba')
@@ -127,7 +155,6 @@ export class PaymentsController {
     @Headers('nomba-timestamp') timestamp: string | undefined,
     @Body() body: Record<string, unknown>,
   ) {
-    this.logger.log('Nomba webhook received on /payments/webhooks/nomba');
-    return this.processNombaWebhook(body, signature, sigValue, timestamp);
+    return this.processNombaWebhook(body, signature, sigValue, timestamp, '/payments/webhooks/nomba');
   }
 }

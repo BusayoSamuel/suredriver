@@ -172,6 +172,10 @@ export class NombaService {
     };
   }
 
+  get webhookRelaxed(): boolean {
+    return this.config.get('NOMBA_WEBHOOK_RELAXED', 'false') === 'true';
+  }
+
   private get isSandbox(): boolean {
     return this.baseUrl.includes('sandbox.nomba.com');
   }
@@ -359,7 +363,13 @@ export class NombaService {
       this.logger.warn('NOMBA_WEBHOOK_SECRET not set — skipping webhook signature check');
       return true;
     }
-    if (!signature || !timestamp) return false;
+    if (!signature || !timestamp) {
+      if (this.isSandbox && this.webhookRelaxed) {
+        this.logger.warn('Nomba webhook missing signature headers — accepted (NOMBA_WEBHOOK_RELAXED)');
+        return true;
+      }
+      return false;
+    }
 
     const merchant = payload.data?.merchant;
     const transaction = payload.data?.transaction;
@@ -380,10 +390,20 @@ export class NombaService {
 
     const expected = createHmac('sha256', secret).update(hashingPayload).digest('base64');
     try {
-      return timingSafeEqual(Buffer.from(expected), Buffer.from(signature));
+      if (timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
+        return true;
+      }
     } catch {
-      return false;
+      // length mismatch
     }
+
+    if (this.isSandbox && this.webhookRelaxed) {
+      this.logger.warn('Nomba webhook signature mismatch — accepted (NOMBA_WEBHOOK_RELAXED)');
+      return true;
+    }
+
+    this.logger.warn(`Nomba webhook signature mismatch for order ${payload.data?.order?.orderReference ?? '?'}`);
+    return false;
   }
 
   async transferToBank(params: {

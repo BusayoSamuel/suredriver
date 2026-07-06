@@ -5,6 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BookingStatus, PaymentStatus, PayoutStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NombaService } from './nomba.service';
@@ -19,9 +20,32 @@ export class PaymentsService {
     private prisma: PrismaService,
     private nomba: NombaService,
     private notifications: NotificationsService,
+    private config: ConfigService,
   ) {}
 
-  async initializeCheckout(ownerId: string, bookingId: string, callbackUrl?: string) {
+  /** Nomba sandbox POSTs webhooks to the order callbackUrl — must match dashboard webhook URL. */
+  private nombaCallbackUrl() {
+    const base = (
+      this.config.get<string>('PUBLIC_API_URL') ?? 'https://suredriver-api.onrender.com'
+    ).replace(/\/$/, '');
+    return `${base}/payments/webhooks/nomba`;
+  }
+
+  async findBookingIdByOrderReference(orderReference: string) {
+    const payment = await this.prisma.payment.findFirst({
+      where: { nombaOrderReference: orderReference },
+      select: { bookingId: true },
+    });
+    return payment?.bookingId ?? null;
+  }
+
+  async syncPaymentFromNombaByOrderReference(orderReference: string) {
+    const bookingId = await this.findBookingIdByOrderReference(orderReference);
+    if (bookingId) await this.syncPaymentFromNomba(bookingId);
+    return bookingId;
+  }
+
+  async initializeCheckout(ownerId: string, bookingId: string, _callbackUrl?: string) {
     const booking = await this.prisma.booking.findUnique({
       where: { id: bookingId },
       include: { payment: true, owner: true },
@@ -34,6 +58,9 @@ export class PaymentsService {
 
     const orderReference =
       booking.payment?.nombaOrderReference ?? this.nomba.generateOrderReference();
+
+    const callbackUrl = this.nombaCallbackUrl();
+    this.logger.log(`Nomba checkout for ${bookingId} callbackUrl=${callbackUrl}`);
 
     const checkout = await this.nomba.createCheckoutOrder({
       amountKobo: booking.priceKobo,
@@ -54,6 +81,7 @@ export class PaymentsService {
     return {
       checkoutLink: checkout.checkoutLink,
       orderReference,
+      callbackUrl,
       mock: this.nomba.mockMode,
     };
   }

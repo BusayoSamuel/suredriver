@@ -14,13 +14,17 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isReturnUrl(url: string) {
+function isNombaCallbackUrl(url: string) {
   try {
     const parsed = new URL(url);
     const base = new URL(getApiUrl());
-    return parsed.origin === base.origin && parsed.pathname === '/payments/return';
+    return (
+      parsed.origin === base.origin &&
+      (parsed.pathname === '/payments/return' ||
+        parsed.pathname === '/payments/webhooks/nomba')
+    );
   } catch {
-    return url.includes('/payments/return');
+    return url.includes('/payments/return') || url.includes('/payments/webhooks/nomba');
   }
 }
 
@@ -126,7 +130,7 @@ export function NombaCheckoutWebView({
     const url = navState.url;
     if (isCheckoutPage(url)) sawCheckoutPageRef.current = true;
 
-    if (isReturnUrl(url)) {
+    if (isNombaCallbackUrl(url)) {
       void burstConfirm();
       return;
     }

@@ -7,7 +7,7 @@ import { ScreenHeader } from '@/components/ScreenHeader';
 import { NombaCheckoutDemo } from '@/components/NombaCheckoutDemo';
 import { NombaCheckoutWebView } from '@/components/NombaCheckoutWebView';
 import { useAuth } from '@/context/AuthContext';
-import { api, getApiUrl, setApiToken, type Quote } from '@/services/api';
+import { api, setApiToken, type Quote } from '@/services/api';
 
 async function isBookingPaid(bookingId: string) {
   const result = await api.confirmPayment(bookingId);
@@ -72,8 +72,7 @@ export default function BookConfirm() {
       });
       setBookingId(booking.id);
 
-      const returnUrl = `${getApiUrl()}/payments/return?bookingId=${encodeURIComponent(booking.id)}`;
-      const checkout = await api.checkout(booking.id, returnUrl);
+      const checkout = await api.checkout(booking.id);
 
       if (checkout.mock) {
         setMockCheckout({
