@@ -15,27 +15,42 @@ export function setApiToken(token: string | null) {
   authToken = token;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 30_000,
+): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
   };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-  const res = await fetch(`${defaultUrl}${path}`, { ...options, headers });
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(`${defaultUrl}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let data: unknown = null;
+    if (text) {
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = {};
+      }
     }
+    if (!res.ok) {
+      throw new Error((data as { message?: string })?.message ?? `Request failed (${res.status})`);
+    }
+    return data as T;
+  } finally {
+    clearTimeout(timer);
   }
-  if (!res.ok) {
-    throw new Error((data as { message?: string })?.message ?? `Request failed (${res.status})`);
-  }
-  return data as T;
 }
 
 export const api = {
@@ -88,7 +103,7 @@ export const api = {
       paymentStatus: string;
       nombaOrderReference?: string | null;
       nombaTransactionId?: string | null;
-    }>(`/payments/bookings/${bookingId}/confirm`, { method: 'POST' }),
+    }>(`/payments/bookings/${bookingId}/confirm`, { method: 'POST' }, 90_000),
   reviewBooking: (id: string, rating: number, comment?: string) =>
     request(`/bookings/${id}/review`, {
       method: 'POST',

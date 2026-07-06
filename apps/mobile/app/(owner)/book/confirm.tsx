@@ -1,70 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { View, Text, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, Alert, ScrollView } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import * as WebBrowser from 'expo-web-browser';
 import { formatNaira } from '@suredriver/shared-types';
 import { AccessibleButton } from '@/components/AccessibleButton';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { NombaCheckoutDemo } from '@/components/NombaCheckoutDemo';
+import { NombaCheckoutWebView } from '@/components/NombaCheckoutWebView';
 import { useAuth } from '@/context/AuthContext';
 import { api, getApiUrl, setApiToken, type Quote } from '@/services/api';
-
-WebBrowser.maybeCompleteAuthSession();
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 async function isBookingPaid(bookingId: string) {
   const result = await api.confirmPayment(bookingId);
   return result.status === 'paid' || result.paymentStatus === 'paid';
-}
-
-/**
- * Nomba sandbox often redirects to nomba.com instead of our callback URL.
- * Poll the API while checkout is open and dismiss the Safari sheet when paid.
- * openBrowserAsync + dismissBrowser is required (dismissBrowser does not close auth sessions).
- */
-async function openNombaCheckout(checkoutLink: string, bookingId: string) {
-  let stopPoll = false;
-  let confirmed = false;
-
-  const pollForPayment = async () => {
-    await sleep(1200);
-    while (!stopPoll) {
-      try {
-        if (await isBookingPaid(bookingId)) {
-          confirmed = true;
-          stopPoll = true;
-          await WebBrowser.dismissBrowser().catch(() => undefined);
-          return;
-        }
-      } catch {
-        // keep polling through transient API errors (e.g. Render cold start)
-      }
-      if (stopPoll) break;
-      await sleep(1500);
-    }
-  };
-
-  const pollTask = pollForPayment();
-
-  try {
-    await WebBrowser.openBrowserAsync(checkoutLink, {
-      presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
-    });
-    stopPoll = true;
-
-    if (!confirmed) {
-      await sleep(1000);
-      confirmed = await isBookingPaid(bookingId);
-    }
-  } finally {
-    stopPoll = true;
-    await pollTask.catch(() => undefined);
-  }
-
-  return confirmed;
 }
 
 export default function BookConfirm() {
@@ -82,6 +29,10 @@ export default function BookConfirm() {
   const [mockCheckout, setMockCheckout] = useState<{
     orderReference: string;
     amountKobo: number;
+  } | null>(null);
+  const [nombaCheckout, setNombaCheckout] = useState<{
+    checkoutLink: string;
+    bookingId: string;
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
@@ -132,21 +83,13 @@ export default function BookConfirm() {
         return;
       }
 
-      setLoading(false);
-      setPaying(true);
       checkoutActiveRef.current = true;
-
-      const paid = await openNombaCheckout(checkout.checkoutLink, booking.id);
-
-      if (paid) {
-        router.replace(`/(owner)/trips/${booking.id}`);
-      }
+      setPaying(true);
+      setNombaCheckout({ checkoutLink: checkout.checkoutLink, bookingId: booking.id });
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Payment failed');
     } finally {
-      checkoutActiveRef.current = false;
       setLoading(false);
-      setPaying(false);
     }
   };
 
@@ -169,53 +112,68 @@ export default function BookConfirm() {
     }
   };
 
+  const handleNombaPaid = () => {
+    const id = nombaCheckout?.bookingId;
+    checkoutActiveRef.current = false;
+    setPaying(false);
+    setNombaCheckout(null);
+    if (id) router.replace(`/(owner)/trips/${id}`);
+  };
+
+  const handleNombaClose = async () => {
+    const id = nombaCheckout?.bookingId;
+    checkoutActiveRef.current = false;
+    setPaying(false);
+    setNombaCheckout(null);
+    if (id && token) {
+      setApiToken(token);
+      try {
+        if (await isBookingPaid(id)) {
+          router.replace(`/(owner)/trips/${id}`);
+        }
+      } catch {
+        // stay on confirm screen
+      }
+    }
+  };
+
   return (
     <View className="flex-1 bg-surface">
       <ScreenHeader title="Find a driver" closeHref="/(owner)/home" />
-      {paying ? (
-        <View className="flex-1 items-center justify-center p-6 gap-4">
-          <ActivityIndicator size="large" color="#1B4332" />
-          <Text className="text-xl text-center text-primary">Waiting for Nomba payment…</Text>
-          <Text className="text-base text-center text-gray-600">
-            The browser will close automatically when payment is confirmed.
-          </Text>
-        </View>
-      ) : (
-        <ScrollView className="flex-1" contentContainerClassName="p-6">
-          <Text className="text-3xl font-bold text-primary mb-4">Confirm booking</Text>
-          {quote && (
-            <View className="bg-white rounded-2xl p-6 mb-6 border-2 border-gray-200">
-              <Text className="text-2xl font-bold">{quote.label}</Text>
-              {params.carModel ? (
-                <Text className="text-xl mt-2 text-gray-700">{params.carModel}</Text>
-              ) : null}
-              {params.transmission ? (
-                <Text className="text-xl mt-1 text-gray-700">
-                  {params.transmission === 'manual' ? 'Manual' : 'Automatic'}
-                </Text>
-              ) : null}
-              <Text className="text-xl mt-2">{params.pickupAddress}</Text>
-              <Text className="text-3xl font-bold text-primary mt-4">{formatNaira(quote.priceKobo)}</Text>
-              <View className="mt-4 pt-4 border-t border-gray-200 gap-1">
-                <Text className="text-lg text-gray-600">
-                  Platform fee: {formatNaira(quote.platformFeeKobo)}
-                </Text>
-                <Text className="text-lg text-gray-600">
-                  Driver receives: {formatNaira(quote.driverPayoutKobo)}
-                </Text>
-                <Text className="text-base text-gray-500 mt-2">Paid securely with Nomba Checkout</Text>
-              </View>
+      <ScrollView className="flex-1" contentContainerClassName="p-6">
+        <Text className="text-3xl font-bold text-primary mb-4">Confirm booking</Text>
+        {quote && (
+          <View className="bg-white rounded-2xl p-6 mb-6 border-2 border-gray-200">
+            <Text className="text-2xl font-bold">{quote.label}</Text>
+            {params.carModel ? (
+              <Text className="text-xl mt-2 text-gray-700">{params.carModel}</Text>
+            ) : null}
+            {params.transmission ? (
+              <Text className="text-xl mt-1 text-gray-700">
+                {params.transmission === 'manual' ? 'Manual' : 'Automatic'}
+              </Text>
+            ) : null}
+            <Text className="text-xl mt-2">{params.pickupAddress}</Text>
+            <Text className="text-3xl font-bold text-primary mt-4">{formatNaira(quote.priceKobo)}</Text>
+            <View className="mt-4 pt-4 border-t border-gray-200 gap-1">
+              <Text className="text-lg text-gray-600">
+                Platform fee: {formatNaira(quote.platformFeeKobo)}
+              </Text>
+              <Text className="text-lg text-gray-600">
+                Driver receives: {formatNaira(quote.driverPayoutKobo)}
+              </Text>
+              <Text className="text-base text-gray-500 mt-2">Paid securely with Nomba Checkout</Text>
             </View>
-          )}
+          </View>
+        )}
 
-          <AccessibleButton
-            title={loading ? 'Opening Nomba…' : 'Pay with Nomba'}
-            onPress={createAndPay}
-            disabled={loading || paying}
-            size="field"
-          />
-        </ScrollView>
-      )}
+        <AccessibleButton
+          title={loading ? 'Opening Nomba…' : paying ? 'Checkout open…' : 'Pay with Nomba'}
+          onPress={createAndPay}
+          disabled={loading || paying}
+          size="field"
+        />
+      </ScrollView>
 
       {mockCheckout ? (
         <NombaCheckoutDemo
@@ -225,6 +183,17 @@ export default function BookConfirm() {
           loading={paying}
           onPay={completeMockPayment}
           onClose={() => !paying && setMockCheckout(null)}
+        />
+      ) : null}
+
+      {nombaCheckout ? (
+        <NombaCheckoutWebView
+          visible
+          checkoutUrl={nombaCheckout.checkoutLink}
+          bookingId={nombaCheckout.bookingId}
+          confirmPaid={isBookingPaid}
+          onPaid={handleNombaPaid}
+          onClose={handleNombaClose}
         />
       ) : null}
     </View>

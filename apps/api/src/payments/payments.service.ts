@@ -99,6 +99,7 @@ export class PaymentsService {
         bookingId,
         verification.transactionId,
         false,
+        { skipVerify: true },
       );
     }
   }

@@ -208,10 +208,28 @@ export class NombaService {
 
   /** Sandbox checkout uses a dedicated lookup endpoint (not production /v1/checkout/transaction). */
   private async fetchSandboxCheckoutTransaction(orderReference: string) {
+    const parentId = this.requireParentAccountId();
+    const accountIds = this.subAccountId ? [parentId, this.subAccountId] : [parentId];
+    const idTypes = ['orderReference', 'ORDER_REFERENCE'];
+
+    for (const accountId of accountIds) {
+      for (const idType of idTypes) {
+        const result = await this.fetchSandboxCheckoutOnce(orderReference, accountId, idType);
+        if (result.verified) return result;
+      }
+    }
+
+    return { verified: false as const };
+  }
+
+  private async fetchSandboxCheckoutOnce(
+    orderReference: string,
+    accountId: string,
+    idType: string,
+  ) {
     const token = await this.getAccessToken();
-    const accountId = this.requireParentAccountId();
     const url = new URL(`${this.baseUrl}/sandbox/checkout/transaction`);
-    url.searchParams.set('idType', 'orderReference');
+    url.searchParams.set('idType', idType);
     url.searchParams.set('id', orderReference);
 
     const res = await fetch(url, {
@@ -231,7 +249,7 @@ export class NombaService {
     }>;
     if (!res.ok || json.code !== '00' || !json.data) {
       this.logger.debug(
-        `Nomba sandbox checkout verify pending for ${orderReference}: ${json.description ?? res.status}`,
+        `Nomba sandbox checkout verify pending (${idType}, ${accountId.slice(0, 8)}…) for ${orderReference}: ${json.description ?? res.status}`,
       );
       return { verified: false as const };
     }
@@ -239,8 +257,15 @@ export class NombaService {
     const details = json.data.transactionDetails;
     const transactionId = details?.transactionId ?? json.data.transactionId;
     const status = details?.status ?? json.data.status ?? json.data.message;
-    const verified =
-      (json.data.success === true || this.isPaidStatus(status)) && !!transactionId;
+
+    if (json.data.success === true) {
+      return {
+        verified: true as const,
+        transactionId: transactionId ?? `WEB-SANDBOX-${orderReference}`,
+      };
+    }
+
+    const verified = this.isPaidStatus(status) && !!transactionId;
     return { verified, transactionId };
   }
 
@@ -254,7 +279,7 @@ export class NombaService {
     const url = new URL(`${this.baseUrl}${path}`);
     url.searchParams.set('orderReference', orderReference);
 
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -262,10 +287,23 @@ export class NombaService {
       },
     });
 
-    const json = (await res.json()) as NombaApiResponse<{
+    let json = (await res.json()) as NombaApiResponse<{
       status?: string;
       transactionId?: string;
     }>;
+    if ((!res.ok || json.code !== '00' || !json.data) && !useSubAccount) {
+      const byRef = new URL(`${this.baseUrl}/v1/transactions/accounts/single`);
+      byRef.searchParams.set('transactionRef', orderReference);
+      res = await fetch(byRef, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${token}`, accountId },
+      });
+      json = (await res.json()) as NombaApiResponse<{
+        status?: string;
+        transactionId?: string;
+      }>;
+    }
+
     if (!res.ok || json.code !== '00' || !json.data) {
       this.logger.debug(
         `Nomba verify pending (${useSubAccount ? 'sub' : 'parent'}) for ${orderReference}: ${json.description ?? res.status}`,
