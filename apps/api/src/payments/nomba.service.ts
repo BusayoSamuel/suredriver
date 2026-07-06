@@ -250,28 +250,14 @@ export class NombaService {
     );
   }
 
-  async verifyTransaction(orderReference: string, checkoutLink?: string | null) {
+  async verifyTransaction(orderReference: string, _checkoutLink?: string | null) {
     if (this.mockMode) {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
     }
 
-    const parentResult = await this.fetchTransaction(orderReference, false);
-    if (parentResult.verified) return parentResult;
-
-    if (this.subAccountId) {
-      const subResult = await this.fetchTransaction(orderReference, true);
-      if (subResult.verified) return subResult;
-    }
-
-    if (this.isSandbox) {
-      const sandboxResult = await this.fetchSandboxCheckoutTransaction(
-        orderReference,
-        checkoutLink,
-      );
-      if (sandboxResult.verified) return sandboxResult;
-    }
-
-    return parentResult;
+    // Hackathon checkout uses POST /v1/checkout/order — verify via parent account only.
+    // Sub-account and /sandbox/checkout/transaction lookups return unrelated 404/noise.
+    return this.fetchTransaction(orderReference, false);
   }
 
   private extractCheckoutOrderId(checkoutLink?: string | null): string | null {
