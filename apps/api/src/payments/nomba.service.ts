@@ -255,19 +255,20 @@ export class NombaService {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
     }
 
+    const parentResult = await this.fetchTransaction(orderReference, false);
+    if (parentResult.verified) return parentResult;
+
+    if (this.subAccountId) {
+      const subResult = await this.fetchTransaction(orderReference, true);
+      if (subResult.verified) return subResult;
+    }
+
     if (this.isSandbox) {
       const sandboxResult = await this.fetchSandboxCheckoutTransaction(
         orderReference,
         checkoutLink,
       );
       if (sandboxResult.verified) return sandboxResult;
-    }
-
-    const parentResult = await this.fetchTransaction(orderReference, false);
-    if (parentResult.verified) return parentResult;
-
-    if (this.subAccountId) {
-      return this.fetchTransaction(orderReference, true);
     }
 
     return parentResult;
@@ -386,6 +387,7 @@ export class NombaService {
     let json = (await res.json()) as NombaApiResponse<{
       status?: string;
       transactionId?: string;
+      id?: string;
     }>;
     if ((!res.ok || json.code !== '00' || !json.data) && !useSubAccount) {
       const byRef = new URL(`${this.baseUrl}/v1/transactions/accounts/single`);
@@ -397,6 +399,7 @@ export class NombaService {
       json = (await res.json()) as NombaApiResponse<{
         status?: string;
         transactionId?: string;
+        id?: string;
       }>;
     }
 
@@ -408,7 +411,7 @@ export class NombaService {
     }
 
     const status = json.data.status;
-    const transactionId = json.data.transactionId;
+    const transactionId = json.data.transactionId ?? json.data.id;
     const verified = this.isPaidStatus(status) && !!transactionId;
     return { verified, transactionId };
   }

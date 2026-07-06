@@ -132,6 +132,7 @@ export class PaymentsService {
         false,
         { skipVerify: true },
       );
+      this.logger.log(`Payment confirmed for booking ${bookingId} via Nomba API`);
     }
   }
 
