@@ -59,15 +59,31 @@ export class PaymentsController {
   }
 
   @Get('return')
-  paymentReturn(@Query('bookingId') _bookingId: string, @Res() res: Response) {
+  async paymentReturn(
+    @Query('bookingId') bookingId: string | undefined,
+    @Res() res: Response,
+  ) {
+    if (bookingId) {
+      await this.paymentsService.syncPaymentFromNomba(bookingId).catch(() => undefined);
+    }
+
+    const deepLink = bookingId
+      ? `suredriver://payments/return?bookingId=${encodeURIComponent(bookingId)}`
+      : 'suredriver://';
+
     res.type('html').send(`<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Payment complete</title>
+<script>
+  setTimeout(function () {
+    window.location.replace(${JSON.stringify(deepLink)});
+  }, 400);
+</script>
 </head><body style="font-family:system-ui;text-align:center;padding:2rem">
 <p style="font-size:1.25rem;font-weight:600">Payment complete</p>
-<p>You can close this window and return to SureDriver.</p>
+<p>Returning to SureDriver…</p>
 </body></html>`);
   }
 

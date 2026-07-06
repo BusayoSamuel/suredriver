@@ -20,14 +20,17 @@ async function isBookingPaid(bookingId: string) {
   return result.status === 'paid' || result.paymentStatus === 'paid';
 }
 
-/** Nomba sandbox may redirect to nomba.com instead of our callback — poll and close browser when paid. */
+/**
+ * Nomba sandbox often redirects to nomba.com instead of our callback URL.
+ * Poll the API while checkout is open and dismiss the Safari sheet when paid.
+ * openBrowserAsync + dismissBrowser is required (dismissBrowser does not close auth sessions).
+ */
 async function openNombaCheckout(checkoutLink: string, bookingId: string) {
-  const returnUrl = `${getApiUrl()}/payments/return`;
   let stopPoll = false;
   let confirmed = false;
 
   const pollForPayment = async () => {
-    await sleep(2500);
+    await sleep(1200);
     while (!stopPoll) {
       try {
         if (await isBookingPaid(bookingId)) {
@@ -37,26 +40,24 @@ async function openNombaCheckout(checkoutLink: string, bookingId: string) {
           return;
         }
       } catch {
-        // keep polling through transient API errors
+        // keep polling through transient API errors (e.g. Render cold start)
       }
       if (stopPoll) break;
-      await sleep(2000);
+      await sleep(1500);
     }
   };
 
   const pollTask = pollForPayment();
 
   try {
-    const session = await WebBrowser.openAuthSessionAsync(checkoutLink, returnUrl);
+    await WebBrowser.openBrowserAsync(checkoutLink, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET,
+    });
     stopPoll = true;
 
     if (!confirmed) {
-      if (session.type === 'success' && (await isBookingPaid(bookingId))) {
-        confirmed = true;
-      } else {
-        await sleep(1500);
-        confirmed = await isBookingPaid(bookingId);
-      }
+      await sleep(1000);
+      confirmed = await isBookingPaid(bookingId);
     }
   } finally {
     stopPoll = true;

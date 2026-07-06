@@ -172,9 +172,28 @@ export class NombaService {
     };
   }
 
+  private get isSandbox(): boolean {
+    return this.baseUrl.includes('sandbox.nomba.com');
+  }
+
+  private isPaidStatus(status?: string): boolean {
+    const s = status?.toUpperCase() ?? '';
+    return (
+      s === 'SUCCESS' ||
+      s === 'SUCCESSFUL' ||
+      s === 'COMPLETED' ||
+      s.includes('PAYMENT SUCCESSFUL')
+    );
+  }
+
   async verifyTransaction(orderReference: string) {
     if (this.mockMode) {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
+    }
+
+    if (this.isSandbox) {
+      const sandboxResult = await this.fetchSandboxCheckoutTransaction(orderReference);
+      if (sandboxResult.verified) return sandboxResult;
     }
 
     const parentResult = await this.fetchTransaction(orderReference, false);
@@ -185,6 +204,44 @@ export class NombaService {
     }
 
     return parentResult;
+  }
+
+  /** Sandbox checkout uses a dedicated lookup endpoint (not production /v1/checkout/transaction). */
+  private async fetchSandboxCheckoutTransaction(orderReference: string) {
+    const token = await this.getAccessToken();
+    const accountId = this.requireParentAccountId();
+    const url = new URL(`${this.baseUrl}/sandbox/checkout/transaction`);
+    url.searchParams.set('idType', 'orderReference');
+    url.searchParams.set('id', orderReference);
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        accountId,
+      },
+    });
+
+    const json = (await res.json()) as NombaApiResponse<{
+      success?: boolean;
+      message?: string;
+      transactionDetails?: { transactionId?: string; status?: string };
+      transactionId?: string;
+      status?: string;
+    }>;
+    if (!res.ok || json.code !== '00' || !json.data) {
+      this.logger.debug(
+        `Nomba sandbox checkout verify pending for ${orderReference}: ${json.description ?? res.status}`,
+      );
+      return { verified: false as const };
+    }
+
+    const details = json.data.transactionDetails;
+    const transactionId = details?.transactionId ?? json.data.transactionId;
+    const status = details?.status ?? json.data.status ?? json.data.message;
+    const verified =
+      (json.data.success === true || this.isPaidStatus(status)) && !!transactionId;
+    return { verified, transactionId };
   }
 
   private async fetchTransaction(orderReference: string, useSubAccount: boolean) {
@@ -216,11 +273,9 @@ export class NombaService {
       return { verified: false as const };
     }
 
-    const status = json.data.status?.toUpperCase();
+    const status = json.data.status;
     const transactionId = json.data.transactionId;
-    const verified =
-      (status === 'SUCCESS' || status === 'SUCCESSFUL' || status === 'COMPLETED') &&
-      !!transactionId;
+    const verified = this.isPaidStatus(status) && !!transactionId;
     return { verified, transactionId };
   }
 

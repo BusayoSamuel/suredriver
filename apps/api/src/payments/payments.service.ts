@@ -143,7 +143,7 @@ export class PaymentsService {
     const transactionId = payload.data?.transaction?.transactionId;
     if (!orderReference) return { received: true };
 
-    await this.markPaymentSuccess(orderReference, transactionId, true);
+    await this.markPaymentSuccess(orderReference, transactionId, true, { skipVerify: true });
     return { received: true };
   }
 
@@ -151,6 +151,7 @@ export class PaymentsService {
     bookingOrOrderRef: string,
     transactionId?: string | null,
     byOrderRef = false,
+    options?: { skipVerify?: boolean },
   ) {
     const payment = await this.prisma.payment.findFirst({
       where: byOrderRef
@@ -160,7 +161,7 @@ export class PaymentsService {
     });
     if (!payment || payment.status === PaymentStatus.paid) return payment;
 
-    if (!this.nomba.mockMode && payment.nombaOrderReference) {
+    if (!options?.skipVerify && !this.nomba.mockMode && payment.nombaOrderReference) {
       const verification = await this.nomba.verifyTransaction(payment.nombaOrderReference);
       if (!verification.verified) {
         this.logger.warn(`Payment verification failed for ${payment.nombaOrderReference}`);
