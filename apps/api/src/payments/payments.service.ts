@@ -142,8 +142,12 @@ export class PaymentsService {
 
     const orderReference = payload.data?.order?.orderReference;
     const transactionId = payload.data?.transaction?.transactionId;
-    if (!orderReference) return { received: true };
+    if (!orderReference) {
+      this.logger.warn('Nomba payment_success webhook missing orderReference');
+      return { received: true };
+    }
 
+    this.logger.log(`Nomba payment_success for order ${orderReference}`);
     await this.markPaymentSuccess(orderReference, transactionId, true, { skipVerify: true });
     return { received: true };
   }

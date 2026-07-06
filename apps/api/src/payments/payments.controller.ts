@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Headers,
+  Logger,
   Param,
   Post,
   Query,
@@ -25,10 +26,27 @@ class CheckoutDto {
 
 @Controller('payments')
 export class PaymentsController {
+  private readonly logger = new Logger(PaymentsController.name);
+
   constructor(
     private paymentsService: PaymentsService,
     private nomba: NombaService,
   ) {}
+
+  private processNombaWebhook(
+    body: Record<string, unknown>,
+    signature: string | undefined,
+    sigValue: string | undefined,
+    timestamp: string | undefined,
+  ) {
+    const payload = body as Parameters<PaymentsService['handleWebhook']>[0];
+    const sig = signature ?? sigValue;
+    if (!this.nomba.verifyWebhookSignature(payload, sig, timestamp)) {
+      this.logger.warn('Rejected Nomba webhook — invalid signature');
+      throw new UnauthorizedException('Invalid Nomba webhook signature');
+    }
+    return this.paymentsService.handleWebhook(payload);
+  }
 
   @Post('bookings/:bookingId/checkout')
   @UseGuards(JwtAuthGuard)
@@ -87,16 +105,29 @@ export class PaymentsController {
 </body></html>`);
   }
 
-  @Post('webhooks/nomba')
-  nombaWebhook(
-    @Headers('nomba-signature') signature: string,
-    @Headers('nomba-timestamp') timestamp: string,
+  /**
+   * Sandbox fires payment_success webhooks to the order callbackUrl (POST).
+   * Dashboard webhooks use POST /payments/webhooks/nomba instead.
+   */
+  @Post('return')
+  paymentReturnWebhook(
+    @Headers('nomba-signature') signature: string | undefined,
+    @Headers('nomba-sig-value') sigValue: string | undefined,
+    @Headers('nomba-timestamp') timestamp: string | undefined,
     @Body() body: Record<string, unknown>,
   ) {
-    const payload = body as Parameters<PaymentsService['handleWebhook']>[0];
-    if (!this.nomba.verifyWebhookSignature(payload, signature, timestamp)) {
-      throw new UnauthorizedException('Invalid Nomba webhook signature');
-    }
-    return this.paymentsService.handleWebhook(payload);
+    this.logger.log('Nomba webhook received on /payments/return');
+    return this.processNombaWebhook(body, signature, sigValue, timestamp);
+  }
+
+  @Post('webhooks/nomba')
+  nombaWebhook(
+    @Headers('nomba-signature') signature: string | undefined,
+    @Headers('nomba-sig-value') sigValue: string | undefined,
+    @Headers('nomba-timestamp') timestamp: string | undefined,
+    @Body() body: Record<string, unknown>,
+  ) {
+    this.logger.log('Nomba webhook received on /payments/webhooks/nomba');
+    return this.processNombaWebhook(body, signature, sigValue, timestamp);
   }
 }

@@ -209,8 +209,9 @@ export class NombaService {
   /** Sandbox checkout uses a dedicated lookup endpoint (not production /v1/checkout/transaction). */
   private async fetchSandboxCheckoutTransaction(orderReference: string) {
     const parentId = this.requireParentAccountId();
-    const accountIds = this.subAccountId ? [parentId, this.subAccountId] : [parentId];
-    const idTypes = ['orderReference', 'ORDER_REFERENCE'];
+    // Checkout orders credit the sub-account — try it first for sandbox lookups.
+    const accountIds = this.subAccountId ? [this.subAccountId, parentId] : [parentId];
+    const idTypes = ['orderReference', 'orderId'];
 
     for (const accountId of accountIds) {
       for (const idType of idTypes) {
@@ -243,7 +244,12 @@ export class NombaService {
     const json = (await res.json()) as NombaApiResponse<{
       success?: boolean;
       message?: string;
-      transactionDetails?: { transactionId?: string; status?: string };
+      transactionDetails?: {
+        paymentReference?: string;
+        statusCode?: string;
+        transactionId?: string;
+        status?: string;
+      };
       transactionId?: string;
       status?: string;
     }>;
@@ -255,8 +261,12 @@ export class NombaService {
     }
 
     const details = json.data.transactionDetails;
-    const transactionId = details?.transactionId ?? json.data.transactionId;
-    const status = details?.status ?? json.data.status ?? json.data.message;
+    const transactionId =
+      details?.paymentReference ??
+      details?.transactionId ??
+      json.data.transactionId;
+    const status =
+      details?.statusCode ?? details?.status ?? json.data.status ?? json.data.message;
 
     if (json.data.success === true) {
       return {
@@ -331,6 +341,9 @@ export class NombaService {
 
     const merchant = payload.data?.merchant;
     const transaction = payload.data?.transaction;
+    let responseCode = transaction?.responseCode ?? '';
+    if (responseCode === 'null') responseCode = '';
+
     const hashingPayload = [
       payload.event_type ?? '',
       payload.requestId ?? '',
@@ -339,7 +352,7 @@ export class NombaService {
       transaction?.transactionId ?? '',
       transaction?.type ?? '',
       transaction?.time ?? '',
-      transaction?.responseCode ?? '',
+      responseCode,
       timestamp,
     ].join(':');
 
