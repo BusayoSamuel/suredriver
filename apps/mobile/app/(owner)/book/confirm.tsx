@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, Alert, Modal, ScrollView } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { WebView } from 'react-native-webview';
+import { WebView, type WebViewNavigation } from 'react-native-webview';
 import { formatNaira } from '@suredriver/shared-types';
 import { AccessibleButton } from '@/components/AccessibleButton';
 import { ScreenHeader } from '@/components/ScreenHeader';
@@ -27,6 +27,23 @@ function isNombaReturnUrl(url: string, apiBase: string) {
   }
 }
 
+function isSureDriverPaymentLink(url: string) {
+  return url.startsWith('suredriver://payment');
+}
+
+function handleCheckoutNavigation(
+  url: string,
+  bookingId: string,
+  apiBase: string,
+  onReturn: (id: string) => void,
+) {
+  if (isNombaReturnUrl(url, apiBase) || isSureDriverPaymentLink(url)) {
+    onReturn(bookingId);
+    return true;
+  }
+  return false;
+}
+
 export default function BookConfirm() {
   const params = useLocalSearchParams<{
     durationType: string;
@@ -46,6 +63,7 @@ export default function BookConfirm() {
   } | null>(null);
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState(false);
+  const confirmingRef = useRef(false);
 
   useEffect(() => {
     if (!token || !params.durationType) return;
@@ -99,11 +117,12 @@ export default function BookConfirm() {
   };
 
   const finishPayment = async (id: string) => {
-    if (!token) return;
+    if (!token || confirmingRef.current) return;
+    confirmingRef.current = true;
     setApiToken(token);
     setPaying(true);
     try {
-      for (let attempt = 0; attempt < 10; attempt++) {
+      for (let attempt = 0; attempt < 12; attempt++) {
         const result = await api.confirmPayment(id);
         if (result.status === 'paid' || result.paymentStatus === 'paid') {
           setCheckoutUrl(null);
@@ -114,18 +133,49 @@ export default function BookConfirm() {
       }
       setCheckoutUrl(null);
       Alert.alert(
-        'Payment not completed',
-        'Nomba has not confirmed this payment yet. You can try again when ready.',
+        'Payment not confirmed yet',
+        'Nomba has not confirmed this payment. Tap "I\'ve completed payment" to try again, or pay again if needed.',
       );
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Could not confirm payment');
     } finally {
       setPaying(false);
+      confirmingRef.current = false;
     }
   };
 
+  const onCheckoutReturn = (id: string) => {
+    finishPayment(id).catch(() => undefined);
+  };
+
+  const onWebViewUrl = (url: string) => {
+    if (!bookingId || !token || paying) return;
+    handleCheckoutNavigation(url, bookingId, getApiUrl(), onCheckoutReturn);
+  };
+
+  const onShouldStartLoad = (request: { url: string }) => {
+    if (!bookingId) return true;
+    const intercepted = handleCheckoutNavigation(
+      request.url,
+      bookingId,
+      getApiUrl(),
+      onCheckoutReturn,
+    );
+    return !intercepted;
+  };
+
   const cancelCheckout = () => {
-    setCheckoutUrl(null);
+    if (!bookingId) {
+      setCheckoutUrl(null);
+      return;
+    }
+    Alert.alert('Cancel payment?', 'Have you already paid in Nomba?', [
+      { text: 'Not yet', style: 'cancel', onPress: () => setCheckoutUrl(null) },
+      {
+        text: 'Yes, I paid',
+        onPress: () => onCheckoutReturn(bookingId),
+      },
+    ]);
   };
 
   const completeMockPayment = async () => {
@@ -180,9 +230,20 @@ export default function BookConfirm() {
         <AccessibleButton
           title={loading ? 'Processing…' : 'Pay with Nomba'}
           onPress={createAndPay}
-          disabled={loading}
+          disabled={loading || paying}
           size="field"
         />
+
+        {bookingId && !checkoutUrl && !mockCheckout ? (
+          <AccessibleButton
+            title={paying ? 'Checking payment…' : "I've completed payment"}
+            variant="outline"
+            className="mt-3"
+            onPress={() => onCheckoutReturn(bookingId)}
+            disabled={paying}
+            size="field"
+          />
+        ) : null}
       </ScrollView>
 
       {mockCheckout ? (
@@ -206,20 +267,38 @@ export default function BookConfirm() {
           {checkoutUrl && !paying ? (
             <WebView
               source={{ uri: checkoutUrl }}
-              onNavigationStateChange={(nav) => {
-                if (!bookingId || !token || paying) return;
-                if (!isNombaReturnUrl(nav.url, getApiUrl())) return;
-                finishPayment(bookingId).catch(() => undefined);
+              style={{ flex: 1 }}
+              originWhitelist={['https://*', 'suredriver://*']}
+              onShouldStartLoadWithRequest={onShouldStartLoad}
+              onNavigationStateChange={(nav: WebViewNavigation) => onWebViewUrl(nav.url)}
+              onMessage={(event) => {
+                try {
+                  const data = JSON.parse(event.nativeEvent.data) as {
+                    type?: string;
+                    bookingId?: string;
+                  };
+                  if (data.type === 'payment_return' && data.bookingId) {
+                    onCheckoutReturn(data.bookingId);
+                  }
+                } catch {
+                  // ignore non-JSON messages
+                }
               }}
             />
           ) : null}
           {!paying ? (
-            <AccessibleButton
-              title="Cancel payment"
-              variant="outline"
-              className="m-4"
-              onPress={cancelCheckout}
-            />
+            <View className="gap-2 m-4">
+              <AccessibleButton
+                title="I've completed payment"
+                onPress={() => bookingId && onCheckoutReturn(bookingId)}
+                size="field"
+              />
+              <AccessibleButton
+                title="Cancel payment"
+                variant="outline"
+                onPress={cancelCheckout}
+              />
+            </View>
           ) : null}
         </View>
       </Modal>

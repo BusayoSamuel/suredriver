@@ -62,16 +62,27 @@ export class PaymentsController {
   paymentReturn(@Query('bookingId') bookingId: string, @Res() res: Response) {
     const id = bookingId ?? '';
     const deepLink = `suredriver://payment/success?bookingId=${encodeURIComponent(id)}`;
+    const payload = JSON.stringify({ type: 'payment_return', bookingId: id });
     res.type('html').send(`<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Payment complete</title>
-<meta http-equiv="refresh" content="0;url=${deepLink}"/>
 </head><body style="font-family:system-ui;text-align:center;padding:2rem">
-<p>Payment complete. Returning to SureDriver…</p>
+<p style="font-size:1.25rem;font-weight:600">Payment complete</p>
+<p>Returning to SureDriver…</p>
 <p><a href="${deepLink}">Tap here if the app does not open</a></p>
-<script>window.location.href=${JSON.stringify(deepLink)};</script>
+<script>
+(function () {
+  var payload = ${JSON.stringify(payload)};
+  if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+    window.ReactNativeWebView.postMessage(payload);
+  }
+  setTimeout(function () {
+    window.location.href = ${JSON.stringify(deepLink)};
+  }, 500);
+})();
+</script>
 </body></html>`);
   }
 
