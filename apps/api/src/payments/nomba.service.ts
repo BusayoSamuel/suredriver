@@ -172,8 +172,68 @@ export class NombaService {
     };
   }
 
-  get webhookRelaxed(): boolean {
-    return this.config.get('NOMBA_WEBHOOK_RELAXED', 'false') === 'true';
+  private buildWebhookHashingPayload(
+    payload: NombaWebhookPayload,
+    timestamp: string,
+  ): string {
+    const merchant = payload.data?.merchant;
+    const transaction = payload.data?.transaction;
+    let responseCode = transaction?.responseCode ?? '';
+    if (responseCode === 'null') responseCode = '';
+
+    return [
+      payload.event_type ?? '',
+      payload.requestId ?? '',
+      merchant?.userId ?? '',
+      merchant?.walletId ?? '',
+      transaction?.transactionId ?? '',
+      transaction?.type ?? '',
+      transaction?.time ?? '',
+      responseCode,
+      timestamp,
+    ].join(':');
+  }
+
+  /**
+   * Verify `nomba-signature` per Nomba docs:
+   * https://developer.nomba.com/docs/api-basics/webhook
+   */
+  verifyWebhookSignature(
+    payload: NombaWebhookPayload,
+    signature: string | undefined,
+    timestamp: string | undefined,
+  ): boolean {
+    const secret = this.config.get<string>('NOMBA_WEBHOOK_SECRET');
+    if (!secret) {
+      if (this.mockMode) return true;
+      this.logger.error('NOMBA_WEBHOOK_SECRET not set — rejecting webhook');
+      return false;
+    }
+    if (!signature?.trim() || !timestamp?.trim()) {
+      this.logger.warn('Nomba webhook missing nomba-signature or nomba-timestamp header');
+      return false;
+    }
+
+    const hashingPayload = this.buildWebhookHashingPayload(payload, timestamp.trim());
+    const expected = createHmac('sha256', secret).update(hashingPayload).digest('base64');
+    const received = signature.trim();
+
+    // Nomba sample code compares signatures case-insensitively.
+    const match =
+      expected.length === received.length &&
+      timingSafeEqual(
+        Buffer.from(expected.toLowerCase()),
+        Buffer.from(received.toLowerCase()),
+      );
+
+    if (!match) {
+      this.logger.warn(
+        `Nomba webhook signature mismatch for order ${payload.data?.order?.orderReference ?? '?'}`,
+      );
+      this.logger.debug(`Nomba webhook hash input: [${hashingPayload}]`);
+    }
+
+    return match;
   }
 
   private get isSandbox(): boolean {
@@ -351,59 +411,6 @@ export class NombaService {
     const transactionId = json.data.transactionId;
     const verified = this.isPaidStatus(status) && !!transactionId;
     return { verified, transactionId };
-  }
-
-  verifyWebhookSignature(
-    payload: NombaWebhookPayload,
-    signature: string | undefined,
-    timestamp: string | undefined,
-  ): boolean {
-    const secret = this.config.get<string>('NOMBA_WEBHOOK_SECRET');
-    if (!secret) {
-      this.logger.warn('NOMBA_WEBHOOK_SECRET not set — skipping webhook signature check');
-      return true;
-    }
-    if (!signature || !timestamp) {
-      if (this.isSandbox && this.webhookRelaxed) {
-        this.logger.warn('Nomba webhook missing signature headers — accepted (NOMBA_WEBHOOK_RELAXED)');
-        return true;
-      }
-      return false;
-    }
-
-    const merchant = payload.data?.merchant;
-    const transaction = payload.data?.transaction;
-    let responseCode = transaction?.responseCode ?? '';
-    if (responseCode === 'null') responseCode = '';
-
-    const hashingPayload = [
-      payload.event_type ?? '',
-      payload.requestId ?? '',
-      merchant?.userId ?? '',
-      merchant?.walletId ?? '',
-      transaction?.transactionId ?? '',
-      transaction?.type ?? '',
-      transaction?.time ?? '',
-      responseCode,
-      timestamp,
-    ].join(':');
-
-    const expected = createHmac('sha256', secret).update(hashingPayload).digest('base64');
-    try {
-      if (timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) {
-        return true;
-      }
-    } catch {
-      // length mismatch
-    }
-
-    if (this.isSandbox && this.webhookRelaxed) {
-      this.logger.warn('Nomba webhook signature mismatch — accepted (NOMBA_WEBHOOK_RELAXED)');
-      return true;
-    }
-
-    this.logger.warn(`Nomba webhook signature mismatch for order ${payload.data?.order?.orderReference ?? '?'}`);
-    return false;
   }
 
   async transferToBank(params: {
