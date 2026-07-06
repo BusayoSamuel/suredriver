@@ -329,6 +329,7 @@ export class NombaService {
     const json = (await res.json()) as NombaApiResponse<{
       success?: boolean;
       message?: string;
+      order?: { orderReference?: string };
       transactionDetails?: {
         paymentReference?: string;
         statusCode?: string;
@@ -344,6 +345,14 @@ export class NombaService {
           `Nomba sandbox verify (${idType}) for ${id}: ${json.description ?? res.status}`,
         );
       }
+      return { verified: false as const };
+    }
+
+    if (
+      idType === 'orderReference' &&
+      json.data.order?.orderReference &&
+      json.data.order.orderReference !== id
+    ) {
       return { verified: false as const };
     }
 
@@ -366,6 +375,39 @@ export class NombaService {
     return { verified, transactionId };
   }
 
+  private transactionMatchesOrderReference(
+    data: {
+      orderReference?: string;
+      onlineCheckoutOrderReference?: string;
+      type?: string;
+    },
+    orderReference: string,
+  ): boolean {
+    return (
+      data.orderReference === orderReference ||
+      data.onlineCheckoutOrderReference === orderReference
+    );
+  }
+
+  private parseVerifiedTransaction(
+    data: {
+      status?: string;
+      transactionId?: string;
+      id?: string;
+      orderReference?: string;
+      onlineCheckoutOrderReference?: string;
+      type?: string;
+    },
+    orderReference: string,
+  ) {
+    if (!this.transactionMatchesOrderReference(data, orderReference)) {
+      return { verified: false as const };
+    }
+    const transactionId = data.transactionId ?? data.id;
+    const verified = this.isPaidStatus(data.status) && !!transactionId;
+    return { verified, transactionId };
+  }
+
   private async fetchTransaction(orderReference: string, useSubAccount: boolean) {
     const token = await this.getAccessToken();
     const accountId = this.requireParentAccountId();
@@ -376,7 +418,7 @@ export class NombaService {
     const url = new URL(`${this.baseUrl}${path}`);
     url.searchParams.set('orderReference', orderReference);
 
-    let res = await fetch(url, {
+    const res = await fetch(url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -384,24 +426,14 @@ export class NombaService {
       },
     });
 
-    let json = (await res.json()) as NombaApiResponse<{
+    const json = (await res.json()) as NombaApiResponse<{
       status?: string;
       transactionId?: string;
       id?: string;
+      orderReference?: string;
+      onlineCheckoutOrderReference?: string;
+      type?: string;
     }>;
-    if ((!res.ok || json.code !== '00' || !json.data) && !useSubAccount) {
-      const byRef = new URL(`${this.baseUrl}/v1/transactions/accounts/single`);
-      byRef.searchParams.set('transactionRef', orderReference);
-      res = await fetch(byRef, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${token}`, accountId },
-      });
-      json = (await res.json()) as NombaApiResponse<{
-        status?: string;
-        transactionId?: string;
-        id?: string;
-      }>;
-    }
 
     if (!res.ok || json.code !== '00' || !json.data) {
       this.logger.debug(
@@ -410,10 +442,13 @@ export class NombaService {
       return { verified: false as const };
     }
 
-    const status = json.data.status;
-    const transactionId = json.data.transactionId ?? json.data.id;
-    const verified = this.isPaidStatus(status) && !!transactionId;
-    return { verified, transactionId };
+    const result = this.parseVerifiedTransaction(json.data, orderReference);
+    if (!result.verified) {
+      this.logger.debug(
+        `Nomba verify: response did not match orderReference ${orderReference} (got ${json.data.orderReference ?? json.data.onlineCheckoutOrderReference ?? 'none'})`,
+      );
+    }
+    return result;
   }
 
   async transferToBank(params: {

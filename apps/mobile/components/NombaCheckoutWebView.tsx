@@ -31,10 +31,13 @@ function isNombaCallbackUrl(url: string) {
 function isCheckoutPage(url: string) {
   try {
     const parsed = new URL(url);
+    const host = parsed.hostname;
     return (
-      parsed.hostname.includes('checkout') ||
+      host.includes('nomba.com') ||
+      host.includes('checkout') ||
       parsed.pathname.includes('/pay/') ||
-      parsed.pathname.includes('/checkout')
+      parsed.pathname.includes('/checkout') ||
+      parsed.pathname.includes('/sandbox/')
     );
   } catch {
     return false;
@@ -73,6 +76,7 @@ export function NombaCheckoutWebView({
   const stopPollRef = useRef(false);
   const sawCheckoutPageRef = useRef(false);
   const confirmBurstRef = useRef(false);
+  const pollStartedRef = useRef(false);
 
   const finishIfPaid = useCallback(async () => {
     if (paidRef.current || stopPollRef.current) return false;
@@ -87,7 +91,7 @@ export function NombaCheckoutWebView({
   }, [bookingId, confirmPaid, onPaid]);
 
   const burstConfirm = useCallback(async () => {
-    if (paidRef.current || confirmBurstRef.current) return;
+    if (!sawCheckoutPageRef.current || paidRef.current || confirmBurstRef.current) return;
     confirmBurstRef.current = true;
     setConfirming(true);
     try {
@@ -102,6 +106,22 @@ export function NombaCheckoutWebView({
     }
   }, [finishIfPaid]);
 
+  const startPolling = useCallback(() => {
+    if (pollStartedRef.current || !sawCheckoutPageRef.current) return;
+    pollStartedRef.current = true;
+
+    const poll = async () => {
+      await sleep(2000);
+      while (!stopPollRef.current && !paidRef.current) {
+        await finishIfPaid();
+        if (stopPollRef.current || paidRef.current) break;
+        await sleep(2500);
+      }
+    };
+
+    void poll();
+  }, [finishIfPaid]);
+
   useEffect(() => {
     if (!visible) return;
 
@@ -109,26 +129,20 @@ export function NombaCheckoutWebView({
     stopPollRef.current = false;
     sawCheckoutPageRef.current = false;
     confirmBurstRef.current = false;
+    pollStartedRef.current = false;
     setConfirming(false);
 
-    const poll = async () => {
-      await sleep(1500);
-      while (!stopPollRef.current && !paidRef.current) {
-        await finishIfPaid();
-        if (stopPollRef.current || paidRef.current) break;
-        await sleep(2000);
-      }
-    };
-
-    void poll();
     return () => {
       stopPollRef.current = true;
     };
-  }, [visible, bookingId, finishIfPaid]);
+  }, [visible, bookingId]);
 
   const handleNavigation = (navState: WebViewNavigation) => {
     const url = navState.url;
-    if (isCheckoutPage(url)) sawCheckoutPageRef.current = true;
+    if (isCheckoutPage(url)) {
+      sawCheckoutPageRef.current = true;
+      startPolling();
+    }
 
     if (isNombaCallbackUrl(url)) {
       void burstConfirm();

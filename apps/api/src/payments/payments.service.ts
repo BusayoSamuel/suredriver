@@ -56,15 +56,35 @@ export class PaymentsService {
       throw new BadRequestException('Booking not awaiting payment');
     }
 
-    const orderReference =
-      booking.payment?.nombaOrderReference ?? this.nomba.generateOrderReference();
+    if (booking.payment?.nombaOrderReference) {
+      const prior = await this.nomba.verifyTransaction(
+        booking.payment.nombaOrderReference,
+        booking.payment.checkoutLink,
+      );
+      if (prior.verified) {
+        await this.markPaymentSuccess(
+          bookingId,
+          prior.transactionId,
+          false,
+          { skipVerify: true },
+        );
+        return {
+          alreadyPaid: true,
+          bookingId,
+          orderReference: booking.payment.nombaOrderReference,
+          mock: this.nomba.mockMode,
+        };
+      }
+    }
+
+    const freshOrderReference = this.nomba.generateOrderReference();
 
     const callbackUrl = this.nombaCallbackUrl();
     this.logger.log(`Nomba checkout for ${bookingId} callbackUrl=${callbackUrl}`);
 
     const checkout = await this.nomba.createCheckoutOrder({
       amountKobo: booking.priceKobo,
-      orderReference,
+      orderReference: freshOrderReference,
       customerEmail: `${booking.owner.phone}@suredriver.ng`,
       callbackUrl,
     });
@@ -72,7 +92,7 @@ export class PaymentsService {
     await this.prisma.payment.update({
       where: { bookingId },
       data: {
-        nombaOrderReference: orderReference,
+        nombaOrderReference: freshOrderReference,
         checkoutLink: checkout.checkoutLink,
         status: PaymentStatus.pending,
       },
@@ -80,7 +100,7 @@ export class PaymentsService {
 
     return {
       checkoutLink: checkout.checkoutLink,
-      orderReference,
+      orderReference: freshOrderReference,
       callbackUrl,
       mock: this.nomba.mockMode,
     };

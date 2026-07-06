@@ -82,13 +82,16 @@ export const api = {
   listBookings: () => request<Booking[]>('/bookings'),
   getBooking: (id: string) => request<Booking>(`/bookings/${id}`),
   checkout: (bookingId: string, callbackUrl?: string) =>
-    request<{ checkoutLink: string; orderReference: string; mock?: boolean }>(
-      `/payments/bookings/${bookingId}/checkout`,
-      {
-        method: 'POST',
-        body: JSON.stringify({ callbackUrl }),
-      },
-    ),
+    request<{
+      checkoutLink: string;
+      orderReference: string;
+      callbackUrl?: string;
+      alreadyPaid?: boolean;
+      mock?: boolean;
+    }>(`/payments/bookings/${bookingId}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify(callbackUrl ? { callbackUrl } : {}),
+    }),
   mockConfirmPayment: (bookingId: string) =>
     request<{
       bookingId: string;

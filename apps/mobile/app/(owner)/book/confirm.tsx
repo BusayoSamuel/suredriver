@@ -74,6 +74,11 @@ export default function BookConfirm() {
 
       const checkout = await api.checkout(booking.id);
 
+      if (checkout.alreadyPaid) {
+        router.replace(`/(owner)/trips/${booking.id}`);
+        return;
+      }
+
       if (checkout.mock) {
         setMockCheckout({
           orderReference: checkout.orderReference,
