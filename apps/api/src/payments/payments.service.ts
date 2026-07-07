@@ -235,10 +235,6 @@ export class PaymentsService {
       bookingStatus === BookingStatus.awaiting_payment ||
       bookingStatus === BookingStatus.requested;
 
-    const history = shouldAdvanceBooking
-      ? appendHistory(payment.booking.trip!.statusHistory, 'paid')
-      : payment.booking.trip!.statusHistory;
-
     await this.prisma.$transaction([
       this.prisma.payment.update({
         where: { id: payment.id },
@@ -255,7 +251,9 @@ export class PaymentsService {
             }),
             this.prisma.trip.update({
               where: { bookingId: payment.bookingId },
-              data: { statusHistory: history },
+              data: {
+                statusHistory: appendHistory(payment.booking.trip!.statusHistory, 'paid'),
+              },
             }),
           ]
         : []),
@@ -374,7 +372,12 @@ export class PaymentsService {
       });
     }
 
-    return result;
+    return {
+      success: result.success,
+      transferId: result.transferId,
+      amountKobo: booking.driverPayoutKobo,
+      reason: result.reason,
+    };
   }
 
   async retryPayout(bookingId: string) {
