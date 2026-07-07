@@ -14,6 +14,7 @@ export default function DriverJob() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { token } = useAuth();
   const [booking, setBooking] = useState<Booking | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!token || !id) return;
@@ -29,34 +30,54 @@ export default function DriverJob() {
   }, [load]);
 
   const accept = async () => {
-    if (!token || !id) return;
+    if (!token || !id || actionLoading) return;
     setApiToken(token);
+    setActionLoading(true);
     try {
       await api.acceptJob(id);
       Alert.alert('Job accepted', 'Head to the pickup location.');
       await load();
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Failed');
+    } finally {
+      setActionLoading(false);
     }
   };
 
   const enRoute = async () => {
-    if (!id || !token) return;
+    if (!id || !token || actionLoading) return;
     setApiToken(token);
-    await api.updateTripStatus(id);
-    await load();
+    setActionLoading(true);
+    try {
+      await api.updateTripStatus(id);
+      await load();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to update status');
+      await load();
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const start = async () => {
-    if (!id || !token) return;
+    if (!id || !token || actionLoading) return;
     setApiToken(token);
-    await api.startTrip(id);
-    await load();
+    setActionLoading(true);
+    try {
+      await api.startTrip(id);
+      await load();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Failed to start trip');
+      await load();
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const end = async () => {
-    if (!id || !token) return;
+    if (!id || !token || actionLoading) return;
     setApiToken(token);
+    setActionLoading(true);
     try {
       const result = await api.endTrip(id);
       const payout = result.payout;
@@ -70,6 +91,8 @@ export default function DriverJob() {
       );
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Failed to end trip');
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -131,24 +154,46 @@ export default function DriverJob() {
 
         <View className="mt-6 gap-3">
           {!booking.driver && (
-            <AccessibleButton title="Accept job" size="field" onPress={accept} />
+            <AccessibleButton
+              title="Accept job"
+              size="field"
+              onPress={accept}
+              loading={actionLoading}
+            />
           )}
-          {booking.status === 'driver_assigned' && (
+          {(booking.status === 'driver_assigned' ||
+            (booking.status === 'paid' && booking.driver)) && (
             <>
               <AccessibleButton
                 title="Open in Google Maps"
                 variant="secondary"
                 size="field"
                 onPress={openMaps}
+                disabled={actionLoading}
               />
-              <AccessibleButton title="I'm en route" size="field" onPress={enRoute} />
+              <AccessibleButton
+                title="I'm en route"
+                size="field"
+                onPress={enRoute}
+                loading={actionLoading}
+              />
             </>
           )}
           {booking.status === 'driver_en_route' && (
-            <AccessibleButton title="Start trip" size="field" onPress={start} />
+            <AccessibleButton
+              title="Start trip"
+              size="field"
+              onPress={start}
+              loading={actionLoading}
+            />
           )}
           {booking.status === 'in_progress' && (
-            <AccessibleButton title="End trip" size="field" onPress={end} />
+            <AccessibleButton
+              title="End trip"
+              size="field"
+              onPress={end}
+              loading={actionLoading}
+            />
           )}
         </View>
       </ScrollView>

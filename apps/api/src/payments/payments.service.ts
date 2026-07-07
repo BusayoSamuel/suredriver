@@ -230,7 +230,14 @@ export class PaymentsService {
       transactionId = verification.transactionId ?? transactionId;
     }
 
-    const history = appendHistory(payment.booking.trip!.statusHistory, 'paid');
+    const bookingStatus = payment.booking.status;
+    const shouldAdvanceBooking =
+      bookingStatus === BookingStatus.awaiting_payment ||
+      bookingStatus === BookingStatus.requested;
+
+    const history = shouldAdvanceBooking
+      ? appendHistory(payment.booking.trip!.statusHistory, 'paid')
+      : payment.booking.trip!.statusHistory;
 
     await this.prisma.$transaction([
       this.prisma.payment.update({
@@ -240,14 +247,18 @@ export class PaymentsService {
           nombaTransactionId: transactionId ?? `TXN-${Date.now()}`,
         },
       }),
-      this.prisma.booking.update({
-        where: { id: payment.bookingId },
-        data: { status: BookingStatus.paid },
-      }),
-      this.prisma.trip.update({
-        where: { bookingId: payment.bookingId },
-        data: { statusHistory: history },
-      }),
+      ...(shouldAdvanceBooking
+        ? [
+            this.prisma.booking.update({
+              where: { id: payment.bookingId },
+              data: { status: BookingStatus.paid },
+            }),
+            this.prisma.trip.update({
+              where: { bookingId: payment.bookingId },
+              data: { statusHistory: history },
+            }),
+          ]
+        : []),
     ]);
 
     await this.notifications.notifyOnlineDrivers({
@@ -272,12 +283,33 @@ export class PaymentsService {
     }
 
     const profile = booking.driver.driverProfile;
-    if (!profile.accountNumber || !profile.bankCode) {
+    const accountNumber = profile.accountNumber?.replace(/\D/g, '') ?? '';
+
+    if (!accountNumber || !profile.bankCode) {
       await this.prisma.payment.update({
         where: { id: booking.payment.id },
         data: { payoutStatus: PayoutStatus.failed },
       });
-      throw new BadRequestException('Driver bank details missing');
+      return {
+        success: false,
+        reason: 'Driver bank details missing',
+        amountKobo: booking.driverPayoutKobo,
+      };
+    }
+
+    if (accountNumber.length !== 10) {
+      await this.prisma.payment.update({
+        where: { id: booking.payment.id },
+        data: { payoutStatus: PayoutStatus.failed },
+      });
+      this.logger.warn(
+        `Driver payout skipped for ${bookingId}: account number must be 10 digits (got ${accountNumber.length})`,
+      );
+      return {
+        success: false,
+        reason: 'Account number must be exactly 10 digits',
+        amountKobo: booking.driverPayoutKobo,
+      };
     }
 
     await this.prisma.payment.update({
@@ -286,13 +318,33 @@ export class PaymentsService {
     });
 
     const merchantTxRef = `PAYOUT-${bookingId}-${Date.now()}`;
-    const result = await this.nomba.transferToBank({
-      amountKobo: booking.driverPayoutKobo,
-      accountNumber: profile.accountNumber,
-      accountName: profile.accountName ?? profile.userId,
-      bankCode: profile.bankCode,
-      merchantTxRef,
-    });
+    let result: {
+      success: boolean;
+      transferId?: string;
+      fee?: number;
+      status?: string;
+      reason?: string;
+    };
+
+    try {
+      result = await this.nomba.transferToBank({
+        amountKobo: booking.driverPayoutKobo,
+        accountNumber,
+        accountName: profile.accountName ?? profile.userId,
+        bankCode: profile.bankCode,
+        merchantTxRef,
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Payout failed';
+      this.logger.error(`Driver payout error for ${bookingId}: ${reason}`, err);
+      result = { success: false, reason };
+    }
+
+    if (!result.success) {
+      this.logger.warn(
+        `Driver payout failed for ${bookingId}: ${result.reason ?? result.status ?? 'unknown'}`,
+      );
+    }
 
     await this.prisma.$transaction([
       this.prisma.payment.update({

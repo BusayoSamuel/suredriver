@@ -16,10 +16,20 @@ export default function DriverOnboarding() {
 
   const submit = async () => {
     if (!token) return;
+    const digits = accountNumber.replace(/\D/g, '');
+    if (digits.length !== 10) {
+      Alert.alert('Invalid account', 'Account number must be exactly 10 digits.');
+      return;
+    }
     setApiToken(token);
     setLoading(true);
     try {
-      await api.driverOnboarding({ bankName, bankCode, accountNumber, accountName });
+      await api.driverOnboarding({
+        bankName,
+        bankCode,
+        accountNumber: digits,
+        accountName,
+      });
       Alert.alert(
         'Submitted',
         'Send your license and ID via WhatsApp for verification.',
@@ -53,7 +63,14 @@ export default function DriverOnboarding() {
       <TextInput className="bg-white border-2 border-gray-200 rounded-xl px-4 py-4 text-xl mb-4" value={bankCode} onChangeText={setBankCode} keyboardType="number-pad" />
 
       <Text className="text-xl font-semibold mb-2">Account number</Text>
-      <TextInput className="bg-white border-2 border-gray-200 rounded-xl px-4 py-4 text-xl mb-4" value={accountNumber} onChangeText={setAccountNumber} keyboardType="number-pad" />
+      <Text className="text-base text-gray-600 mb-2">10 digits (Nigerian NUBAN)</Text>
+      <TextInput
+        className="bg-white border-2 border-gray-200 rounded-xl px-4 py-4 text-xl mb-4"
+        value={accountNumber}
+        onChangeText={setAccountNumber}
+        keyboardType="number-pad"
+        maxLength={10}
+      />
 
       <Text className="text-xl font-semibold mb-2">Account name</Text>
       <TextInput className="bg-white border-2 border-gray-200 rounded-xl px-4 py-4 text-xl mb-6" value={accountName} onChangeText={setAccountName} />

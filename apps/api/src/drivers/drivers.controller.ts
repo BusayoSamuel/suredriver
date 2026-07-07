@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Patch, Post, UseGuards } from '@nestjs/common';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsString, Matches } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { UserRole } from '@prisma/client';
 import { CurrentUser, JwtAuthGuard, JwtPayload, Roles } from '../auth/jwt-auth.guard';
 import { DriversService } from './drivers.service';
@@ -12,6 +13,8 @@ class OnboardingDto {
   bankName!: string;
 
   @IsString()
+  @Transform(({ value }) => String(value ?? '').replace(/\D/g, ''))
+  @Matches(/^\d{10}$/, { message: 'Account number must be exactly 10 digits' })
   accountNumber!: string;
 
   @IsString()

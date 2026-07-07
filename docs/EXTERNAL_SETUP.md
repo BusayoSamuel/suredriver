@@ -232,8 +232,10 @@ Start with **sandbox** before going live.
 ### Verify (sandbox)
 
 - Owner books → Pay opens Nomba checkout WebView (not auto-mock)
-- After payment, booking status becomes `paid`
+- After payment, booking status becomes `paid` (via **polling**, usually ~30–90s; webhooks may not arrive in sandbox)
 - Driver sees the job offer
+
+**If webhooks never appear in Render logs during sandbox checkout, that is a known Nomba sandbox limitation — not a misconfiguration on your side.**
 
 ### Going live
 

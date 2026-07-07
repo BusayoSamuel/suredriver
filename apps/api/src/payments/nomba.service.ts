@@ -5,13 +5,21 @@ import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
 interface NombaApiResponse<T> {
   code?: string;
   description?: string;
+  errors?: string[];
   data?: T;
 }
 
 interface NombaTokenData {
   access_token: string;
+  refresh_token?: string;
   expires_in?: number;
   expiresAt?: string;
+}
+
+interface CachedNombaToken {
+  token: string;
+  refreshToken?: string;
+  expiresAt: number;
 }
 
 interface CheckoutOrderResponse {
@@ -37,9 +45,62 @@ export interface NombaWebhookPayload {
 @Injectable()
 export class NombaService {
   private readonly logger = new Logger(NombaService.name);
-  private cachedToken: { token: string; expiresAt: number } | null = null;
+  private cachedToken: CachedNombaToken | null = null;
+  private configChecked = false;
 
   constructor(private config: ConfigService) {}
+
+  /** Hackathon parent account — always sent as the `accountId` header, never the sub-account. */
+  private get parentAccountId(): string {
+    return (
+      this.config.get<string>('NOMBA_PARENT_ACCOUNT_ID') ??
+      this.config.get<string>('NOMBA_ACCOUNT_ID') ??
+      ''
+    );
+  }
+
+  /** Team sub-account (one per hackathon team — set via env, never created in code). */
+  private get subAccountId(): string | undefined {
+    return this.config.get<string>('NOMBA_SUB_ACCOUNT_ID') || undefined;
+  }
+
+  private requireParentAccountId(): string {
+    this.validateAccountConfig();
+    const id = this.parentAccountId;
+    if (!id) throw new Error('NOMBA_PARENT_ACCOUNT_ID (or NOMBA_ACCOUNT_ID) not configured');
+    return id;
+  }
+
+  private validateAccountConfig() {
+    if (this.configChecked || this.mockMode) return;
+    this.configChecked = true;
+
+    const parent = this.parentAccountId;
+    const sub = this.subAccountId;
+
+    if (!parent) {
+      this.logger.warn('NOMBA_PARENT_ACCOUNT_ID is not set — Nomba API calls will fail');
+      return;
+    }
+
+    if (sub && parent === sub) {
+      this.logger.error(
+        'NOMBA_PARENT_ACCOUNT_ID and NOMBA_SUB_ACCOUNT_ID are the same — put the hackathon parent id in NOMBA_PARENT_ACCOUNT_ID and your team sub-account in NOMBA_SUB_ACCOUNT_ID (403 errors)',
+      );
+    }
+
+    this.logger.log(
+      `Nomba accounts: parent header=${parent.slice(0, 8)}…${sub ? `, sub=${sub.slice(0, 8)}…` : ', no sub-account'}`,
+    );
+  }
+
+  /** Parent accountId header on every authenticated Nomba request. */
+  private authHeaders(accessToken: string): Record<string, string> {
+    return {
+      Authorization: `Bearer ${accessToken}`,
+      accountId: this.requireParentAccountId(),
+    };
+  }
 
   get mockMode(): boolean {
     return this.config.get('NOMBA_MOCK', 'true') === 'true';
@@ -49,28 +110,18 @@ export class NombaService {
     return this.config.get('NOMBA_BASE_URL', 'https://sandbox.nomba.com');
   }
 
-  /** Parent account ID — required on every Nomba API call (accountId header). */
-  private get parentAccountId(): string {
-    return (
-      this.config.get<string>('NOMBA_PARENT_ACCOUNT_ID') ??
-      this.config.get<string>('NOMBA_ACCOUNT_ID') ??
-      ''
-    );
-  }
-
-  /** Sub-account ID — credits checkout funds to the hackathon sub-account. */
-  private get subAccountId(): string | undefined {
-    return this.config.get<string>('NOMBA_SUB_ACCOUNT_ID') || undefined;
-  }
-
-  private requireParentAccountId(): string {
-    const id = this.parentAccountId;
-    if (!id) throw new Error('NOMBA_PARENT_ACCOUNT_ID (or NOMBA_ACCOUNT_ID) not configured');
-    return id;
-  }
-
   private formatAmount(kobo: number): string {
     return (kobo / 100).toFixed(2);
+  }
+
+  private normalizeAccountNumber(accountNumber: string): string {
+    return accountNumber.replace(/\D/g, '');
+  }
+
+  private nombaErrorMessage(json: NombaApiResponse<unknown>, status: number): string {
+    if (json.description) return json.description;
+    if (json.errors?.length) return json.errors.join('; ');
+    return `Nomba API request failed (${status})`;
   }
 
   private async parseResponse<T>(res: Response): Promise<NombaApiResponse<T>> {
@@ -96,6 +147,30 @@ export class NombaService {
       return this.cachedToken.token;
     }
 
+    if (this.cachedToken?.refreshToken) {
+      try {
+        return await this.refreshAccessToken(
+          this.cachedToken.token,
+          this.cachedToken.refreshToken,
+        );
+      } catch (err) {
+        this.logger.warn('Nomba token refresh failed, re-issuing credentials', err);
+      }
+    }
+
+    return this.issueAccessToken();
+  }
+
+  private cacheTokenData(data: NombaTokenData): string {
+    this.cachedToken = {
+      token: data.access_token,
+      refreshToken: data.refresh_token ?? this.cachedToken?.refreshToken,
+      expiresAt: this.tokenExpiresAt(data),
+    };
+    return data.access_token;
+  }
+
+  private async issueAccessToken(): Promise<string> {
     const clientId = this.config.get<string>('NOMBA_CLIENT_ID');
     const clientSecret = this.config.get<string>('NOMBA_CLIENT_SECRET');
     if (!clientId || !clientSecret) {
@@ -120,8 +195,35 @@ export class NombaService {
     const token = json.data?.access_token;
     if (!token) throw new Error('Failed to obtain Nomba token');
 
-    this.cachedToken = { token, expiresAt: this.tokenExpiresAt(json.data!) };
-    return token;
+    this.logger.debug('Nomba access token issued');
+    return this.cacheTokenData(json.data!);
+  }
+
+  private async refreshAccessToken(
+    currentAccessToken: string,
+    refreshToken: string,
+  ): Promise<string> {
+    const accountId = this.requireParentAccountId();
+    const res = await fetch(`${this.baseUrl}/v1/auth/token/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${currentAccessToken}`,
+        accountId,
+      },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: refreshToken,
+      }),
+    });
+
+    const json = (await res.json()) as NombaApiResponse<NombaTokenData>;
+    if (!res.ok || (json.code && json.code !== '00') || !json.data?.access_token) {
+      throw new Error(json.description ?? `Nomba token refresh failed (${res.status})`);
+    }
+
+    this.logger.debug('Nomba access token refreshed');
+    return this.cacheTokenData(json.data);
   }
 
   async createCheckoutOrder(params: {
@@ -140,7 +242,6 @@ export class NombaService {
     }
 
     const token = await this.getAccessToken();
-    const accountId = this.requireParentAccountId();
 
     const order: Record<string, string> = {
       amount: this.formatAmount(params.amountKobo),
@@ -149,14 +250,14 @@ export class NombaService {
       customerEmail: params.customerEmail ?? 'customer@suredriver.ng',
     };
     if (params.callbackUrl) order.callbackUrl = params.callbackUrl;
+    // Sub-account goes in the order body — never in the accountId header.
     if (this.subAccountId) order.accountId = this.subAccountId;
 
     const res = await fetch(`${this.baseUrl}/v1/checkout/order`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        accountId,
+        ...this.authHeaders(token),
       },
       body: JSON.stringify({ order }),
     });
@@ -250,14 +351,24 @@ export class NombaService {
     );
   }
 
-  async verifyTransaction(orderReference: string, _checkoutLink?: string | null) {
+  async verifyTransaction(orderReference: string, checkoutLink?: string | null) {
     if (this.mockMode) {
       return { verified: true, transactionId: `MOCK-TXN-${orderReference}` };
     }
 
-    // Hackathon checkout uses POST /v1/checkout/order — verify via parent account only.
-    // Sub-account and /sandbox/checkout/transaction lookups return unrelated 404/noise.
-    return this.fetchTransaction(orderReference, false);
+    const parentResult = await this.fetchTransaction(orderReference, false);
+    if (parentResult.verified) return parentResult;
+
+    if (this.subAccountId) {
+      const subResult = await this.fetchTransaction(orderReference, true);
+      if (subResult.verified) return subResult;
+    }
+
+    if (this.isSandbox) {
+      return this.fetchSandboxCheckoutTransaction(orderReference, checkoutLink);
+    }
+
+    return parentResult;
   }
 
   private extractCheckoutOrderId(checkoutLink?: string | null): string | null {
@@ -287,18 +398,14 @@ export class NombaService {
     }
 
     for (const { idType, id } of lookups) {
-      const result = await this.fetchSandboxCheckoutOnce(id, accountId, idType);
+      const result = await this.fetchSandboxCheckoutOnce(id, idType);
       if (result.verified) return result;
     }
 
     return { verified: false as const };
   }
 
-  private async fetchSandboxCheckoutOnce(
-    id: string,
-    accountId: string,
-    idType: string,
-  ) {
+  private async fetchSandboxCheckoutOnce(id: string, idType: string) {
     const token = await this.getAccessToken();
     const url = new URL(`${this.baseUrl}/sandbox/checkout/transaction`);
     url.searchParams.set('idType', idType);
@@ -306,10 +413,7 @@ export class NombaService {
 
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        accountId,
-      },
+      headers: this.authHeaders(token),
     });
 
     const json = (await res.json()) as NombaApiResponse<{
@@ -396,7 +500,6 @@ export class NombaService {
 
   private async fetchTransaction(orderReference: string, useSubAccount: boolean) {
     const token = await this.getAccessToken();
-    const accountId = this.requireParentAccountId();
 
     const path = useSubAccount
       ? `/v1/transactions/accounts/${this.subAccountId}/single`
@@ -406,10 +509,7 @@ export class NombaService {
 
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        accountId,
-      },
+      headers: this.authHeaders(token),
     });
 
     const json = (await res.json()) as NombaApiResponse<{
@@ -453,33 +553,77 @@ export class NombaService {
       };
     }
 
-    const token = await this.getAccessToken();
-    const accountId = this.requireParentAccountId();
+    const accountNumber = this.normalizeAccountNumber(params.accountNumber);
+    if (accountNumber.length !== 10) {
+      return {
+        success: false,
+        reason: 'Account number must be exactly 10 digits',
+      };
+    }
 
-    const res = await fetch(`${this.baseUrl}/v2/transfers/bank`, {
+    const token = await this.getAccessToken();
+    const subAccountId = this.subAccountId;
+    // Sub-account in URL path; parent always in accountId header.
+    const path = subAccountId
+      ? `/v2/transfers/bank/${subAccountId}`
+      : '/v2/transfers/bank';
+
+    const res = await fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-        accountId,
+        ...this.authHeaders(token),
       },
       body: JSON.stringify({
         amount: this.formatAmount(params.amountKobo),
-        accountNumber: params.accountNumber,
+        accountNumber,
         accountName: params.accountName,
         bankCode: params.bankCode,
         merchantTxRef: params.merchantTxRef,
         senderName: params.senderName ?? 'SureDriver',
+        narration: 'SureDriver trip payout',
       }),
     });
 
-    const json = await this.parseResponse<{ id: string; status: string; fee?: number }>(res);
-    const status = json.data?.status?.toUpperCase();
+    const json = (await res.json()) as NombaApiResponse<{
+      id: string;
+      status: string;
+      fee?: number;
+    }>;
+
+    if (!res.ok || (json.code && json.code !== '00')) {
+      const reason = this.nombaErrorMessage(json, res.status);
+      this.logger.error(
+        `Nomba transfer failed (${res.status}) ref=${params.merchantTxRef}: ${reason}`,
+      );
+      return {
+        success: false,
+        transferId: json.data?.id,
+        fee: json.data?.fee,
+        status: json.data?.status,
+        reason,
+      };
+    }
+
+    const status = json.data?.status?.toUpperCase() ?? '';
+    const success = status === 'SUCCESS' || status === 'PENDING_BILLING';
+
+    if (!success) {
+      this.logger.warn(
+        `Nomba transfer rejected ref=${params.merchantTxRef} status=${status} (${json.description ?? 'no description'})`,
+      );
+    } else {
+      this.logger.log(
+        `Nomba transfer ${status} ref=${params.merchantTxRef} id=${json.data?.id ?? '—'}`,
+      );
+    }
 
     return {
-      success: status === 'SUCCESS',
+      success,
       transferId: json.data?.id,
       fee: json.data?.fee,
+      status,
+      reason: success ? undefined : json.description,
     };
   }
 

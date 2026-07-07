@@ -87,7 +87,7 @@ async function main() {
             verificationStatus: 'approved',
             bankCode: '058',
             bankName: 'GTBank',
-            accountNumber: '0123456789',
+            accountNumber: '0554772814',
             accountName: 'Emeka Bello',
             isOnline: false,
           },
@@ -97,7 +97,13 @@ async function main() {
   } else {
     await prisma.driverProfile.updateMany({
       where: { userId: driver.id },
-      data: { verificationStatus: 'approved' },
+      data: {
+        verificationStatus: 'approved',
+        bankCode: '058',
+        bankName: 'GTBank',
+        accountNumber: '0554772814',
+        accountName: 'Emeka Bello',
+      },
     });
     await prisma.user.update({
       where: { id: driver.id },

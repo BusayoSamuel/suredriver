@@ -20,7 +20,19 @@ export class TripsService {
 
   async updateStatus(driverId: string, bookingId: string, status: 'driver_en_route') {
     const booking = await this.getDriverBooking(driverId, bookingId);
-    if (booking.status !== BookingStatus.driver_assigned) {
+
+    if (booking.status === BookingStatus.driver_en_route) {
+      return this.prisma.booking.findUnique({
+        where: { id: bookingId },
+        include: { trip: true, owner: true },
+      });
+    }
+
+    const canMarkEnRoute =
+      booking.status === BookingStatus.driver_assigned ||
+      (booking.status === BookingStatus.paid && booking.driverId === driverId);
+
+    if (!canMarkEnRoute) {
       throw new BadRequestException('Invalid status transition');
     }
 
@@ -100,16 +112,33 @@ export class TripsService {
       data: { bookingId },
     });
 
-    const payout = await this.payments.triggerDriverPayout(bookingId);
+    let payout: {
+      success: boolean;
+      transferId?: string;
+      amountKobo: number;
+      reason?: string;
+    };
+
+    try {
+      const result = await this.payments.triggerDriverPayout(bookingId);
+      payout = {
+        success: result.success,
+        transferId: result.transferId,
+        amountKobo: booking.driverPayoutKobo,
+        reason: result.reason,
+      };
+    } catch (err) {
+      payout = {
+        success: false,
+        amountKobo: booking.driverPayoutKobo,
+        reason: err instanceof Error ? err.message : 'Payout failed',
+      };
+    }
 
     return {
       ...updated,
       actualMinutes,
-      payout: {
-        success: payout.success,
-        transferId: payout.transferId,
-        amountKobo: booking.driverPayoutKobo,
-      },
+      payout,
     };
   }
 
